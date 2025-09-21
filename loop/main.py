@@ -18,6 +18,8 @@ from data.mode import get_mode, MODE_AUTO, MODE_SEMI_AUTO
 from data.status import get_status
 from data.redis import get_json_from_redis
 from loop.sequence import is_current_step_finished, start_step, start_sequence
+from hardware.relay.relays import close_all_relays
+from data.status import clear_status
 
 def main():
     """Main control loop for the arrosage system."""
@@ -39,9 +41,14 @@ def main():
                             # Move to next step
                             next_relay = opened_relay + 1
                             start_step(next_relay)
+                        else:
+                            # Sequence complete
+                            close_all_relays()
+                            clear_status()
+                            print("✅ Sequence completed - all steps finished")
                     # If step is not finished, continue waiting
-                else:
-                    # No status exists - check if we should start based on schedule
+                elif current_mode == MODE_AUTO:
+                    # No status exists and MODE_AUTO - check if we should start based on schedule
                     settings = get_json_from_redis('settings')
                     if settings is not None:
                         schedule = settings.get('schedule', [])

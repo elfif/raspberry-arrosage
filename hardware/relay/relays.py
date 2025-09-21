@@ -28,9 +28,9 @@ def close_relay(relay_number):
 
 # def main():
 #     close_all_relays()
-#     open_relay(7)
-#     time.sleep(10)
-#     close_relay(7)
+# #     open_relay(7)
+# #     time.sleep(10)
+# #     close_relay(7)
 
 # if __name__ == "__main__":
 #     main()

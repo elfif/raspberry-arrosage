@@ -47,7 +47,7 @@ def setup_test_settings():
     # Create test settings
     test_settings = {
         "start_at": start_at,
-        "sequence": [30] * 8,  # All 8 relays stay open for 30 seconds
+        "sequence": [10] * 8,  # All 8 relays stay open for 10 seconds
         "schedule": schedule
     }
     
@@ -58,7 +58,7 @@ def setup_test_settings():
         print(f"   🤖 Mode: {MODE_AUTO}")
         print(f"   📅 Current day: {current_day} ({'Mon Tue Wed Thu Fri Sat Sun'.split()[current_day]})")
         print(f"   🕒 Start time: {start_at}")
-        print(f"   ⏱️  Relay duration: 30 seconds each")
+        print(f"   ⏱️  Relay duration: 10 seconds each")
         print(f"   📋 Schedule: {schedule}")
         print(f"   🎯 Total test duration: ~4 minutes (8 relays × 30s)")
         return True
@@ -81,7 +81,7 @@ def main_test():
     print("💡 The loop will:")
     print("   1. Wait for the scheduled start time ( minutes from now)")
     print("   2. Automatically start the sequence")
-    print("   3. Progress through all 8 relays (30 seconds each)")
+    print("   3. Progress through all 8 relays (10 seconds each)")
     print("   4. Complete the full sequence")
     print()
     print("⌨️  Press Ctrl+C to stop the test")
