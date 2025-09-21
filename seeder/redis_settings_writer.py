@@ -2,10 +2,15 @@
 """
 Redis Settings Writer Script
 
-This script connects to Redis and writes a settings object containing:
-- start_at: time property
-- sequence: array of 8 integers (7 values of 3600, last value of 0)
-- schedule: array of 7 booleans (6 false values, last one true)
+This script connects to Redis and writes two objects:
+
+1. 'settings' key containing:
+   - start_at: time property
+   - sequence: array of 8 integers (7 values of 3600, last value of 0)
+   - schedule: array of 7 booleans (6 false values, last one true)
+
+2. 'mode' key containing:
+   - current: string property (default: "manual")
 """
 
 import redis
@@ -39,7 +44,7 @@ def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
         
         # Create the settings object with the new structure
         settings = {
-            "start_at": "08:00",  # Default start time at 8:00 AM
+            "start_at": "20:00",  # Default start time at 20:00
             "sequence": [3600] * 7 + [0],  # 7 values of 3600, 1 value of 0
             "schedule": [False] * 6 + [True]  # 6 false values, 1 true value
         }
@@ -49,6 +54,17 @@ def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
         
         # Write to Redis with key 'settings'
         r.set('settings', settings_json)
+        
+        # Create the mode object
+        mode = {
+            "current": "manual"  # Default mode value
+        }
+        
+        # Convert mode to JSON string for storage
+        mode_json = json.dumps(mode, indent=2)
+        
+        # Write mode to Redis with key 'mode'
+        r.set('mode', mode_json)
         
         # Verify the data was written
         stored_data = r.get('settings')
@@ -62,7 +78,20 @@ def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
             print(f"   📏 sequence: {parsed_data['sequence']} (length: {len(parsed_data['sequence'])})")
             print(f"   📅 schedule: {parsed_data['schedule']} (length: {len(parsed_data['schedule'])})")
         else:
-            print("❌ Failed to verify data was written to Redis")
+            print("❌ Failed to verify settings data was written to Redis")
+            return False
+        
+        # Verify the mode data was written
+        stored_mode = r.get('mode')
+        if stored_mode:
+            parsed_mode = json.loads(stored_mode)
+            print(f"✅ Successfully wrote mode to Redis key 'mode'")
+            print(f"📊 Mode structure:")
+            print(f"   🔑 Key: mode")
+            print(f"   💾 Value type: {type(parsed_mode)}")
+            print(f"   ⚙️  current: {parsed_mode['current']}")
+        else:
+            print("❌ Failed to verify mode data was written to Redis")
             return False
             
         return True
@@ -77,7 +106,7 @@ def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
 
 def read_settings_from_redis(host='localhost', port=6379, db=0, password=None):
     """
-    Read settings data from Redis for verification.
+    Read settings and mode data from Redis for verification.
     
     Args:
         host (str): Redis host address (default: localhost)
@@ -102,10 +131,22 @@ def read_settings_from_redis(host='localhost', port=6379, db=0, password=None):
             print(f"   🕐 start_at: {parsed_data['start_at']}")
             print(f"   📏 sequence: {parsed_data['sequence']}")
             print(f"   📅 schedule: {parsed_data['schedule']}")
-            return parsed_data
         else:
             print("❌ No data found for key 'settings'")
-            return None
+            parsed_data = None
+        
+        # Read mode data
+        stored_mode = r.get('mode')
+        if stored_mode:
+            parsed_mode = json.loads(stored_mode)
+            print(f"📖 Current mode in Redis:")
+            print(f"   🔑 Key: mode")
+            print(f"   ⚙️  current: {parsed_mode['current']}")
+        else:
+            print("❌ No data found for key 'mode'")
+            parsed_mode = None
+            
+        return {"settings": parsed_data, "mode": parsed_mode}
             
     except Exception as e:
         print(f"❌ Error reading from Redis: {e}")

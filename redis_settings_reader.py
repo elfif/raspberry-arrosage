@@ -56,6 +56,8 @@ def read_settings_from_redis(host='localhost', port=6379, db=0, password=None) -
         else:
             print("❌ No data found for key 'settings'")
             return None
+
+        
             
     except redis.ConnectionError as e:
         print(f"❌ Failed to connect to Redis: {e}")
@@ -64,6 +66,42 @@ def read_settings_from_redis(host='localhost', port=6379, db=0, password=None) -
     except Exception as e:
         print(f"❌ Error occurred: {e}")
         return None
+
+def read_mode_from_redis(host='localhost', port=6379, db=0, password=None) -> Optional[Dict[str, Any]]:
+    """
+    Read mode data from Redis.
+    """
+    try:
+        r = redis.Redis(
+            host=host,
+            port=port,
+            db=db,
+            password=password,
+            decode_responses=True
+        )
+        stored_mode = r.get('mode')
+        if stored_mode:
+            try:
+                parsed_mode = json.loads(stored_mode)
+                if isinstance(parsed_mode, dict) and 'current' in parsed_mode:
+                    return parsed_mode
+                else:
+                    print("⚠️  Warning: Data is not in the expected mode format")
+                    return parsed_mode
+            except json.JSONDecodeError:
+                print("⚠️  Warning: Data is not valid JSON")
+                return stored_mode
+        else:
+            print("❌ No data found for key 'mode'")
+            return None
+    except redis.ConnectionError as e:
+        print(f"❌ Failed to connect to Redis: {e}")
+        print("💡 Make sure Redis is running and accessible")
+        return None
+    except Exception as e:
+        print(f"❌ Error occurred: {e}")
+        return None
+
 
 def display_settings(settings: Dict[str, Any]) -> None:
     """
@@ -137,6 +175,19 @@ def display_settings(settings: Dict[str, Any]) -> None:
         else:
             print("⚠️  Some data does not match expected patterns")
 
+def display_mode(mode: Dict[str, Any]) -> None:
+    """
+    Display the mode in a formatted way.
+    """
+    if not mode:
+        print("❌ No mode to display")
+        return
+    
+    print("\n📊 Mode Data:")
+    print("=" * 50)
+    print(f"🔑 current value: {mode['current']}")
+    print()
+
 def check_redis_connection(host='localhost', port=6379, db=0, password=None) -> bool:
     """
     Check if Redis connection is available.
@@ -186,7 +237,25 @@ def main():
         print("❌ Cannot connect to Redis. Please check your configuration.")
         print("💡 Make sure Redis is running and accessible")
         sys.exit(1)
-    
+
+    # Read mode from Redis
+    mode = read_mode_from_redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        password=REDIS_PASSWORD
+    )
+
+    if mode is not None:
+        # Display the mode
+        display_mode(mode)
+        print("✅ Script completed successfully!")
+    else:
+        print("❌ Failed to read mode from Redis")
+        print("💡 Make sure the 'mode' key exists and contains valid data")
+        sys.exit(1)
+
+
     # Read settings from Redis
     settings = read_settings_from_redis(
         host=REDIS_HOST,
