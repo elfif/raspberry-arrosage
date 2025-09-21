@@ -8,96 +8,68 @@ This script connects to Redis and reads the settings object containing:
 - schedule: array of 7 booleans (6 false values, last one true)
 """
 
-import redis
 import json
 import sys
 from typing import Dict, Any, Optional
+from data.redis import get_json_from_redis, check_redis_connection, print_connection_info
 
-def read_settings_from_redis(host='localhost', port=6379, db=0, password=None) -> Optional[Dict[str, Any]]:
+def read_settings_from_redis(host=None, port=None, db=None, password=None) -> Optional[Dict[str, Any]]:
     """
     Read settings data from Redis.
     
     Args:
-        host (str): Redis host address (default: localhost)
-        port (int): Redis port (default: 6379)
-        db (int): Redis database number (default: 0)
-        password (str): Redis password if authentication is required (default: None)
+        host (str, optional): Redis host address (uses config default if None)
+        port (int, optional): Redis port (uses config default if None)
+        db (int, optional): Redis database number (uses config default if None)
+        password (str, optional): Redis password (uses config default if None)
     
     Returns:
         Dict[str, Any] or None: The settings object if successful, None if failed
     """
     try:
-        # Create Redis connection
-        r = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
-            decode_responses=True
-        )
-        
-        # Test connection
-        r.ping()
         print("✅ Successfully connected to Redis")
         
-        # Read the settings key
-        stored_data = r.get('settings')
-        if stored_data:
-            try:
-                parsed_data = json.loads(stored_data)
-                if isinstance(parsed_data, dict) and 'start_at' in parsed_data and 'sequence' in parsed_data and 'schedule' in parsed_data:
-                    return parsed_data
-                else:
-                    print("⚠️  Warning: Data is not in the expected settings format")
-                    return parsed_data
-            except json.JSONDecodeError:
-                print("⚠️  Warning: Data is not valid JSON")
-                return stored_data
+        # Read the settings key using centralized function
+        parsed_data = get_json_from_redis('settings', host, port, db, password)
+        if parsed_data:
+            if isinstance(parsed_data, dict) and 'start_at' in parsed_data and 'sequence' in parsed_data and 'schedule' in parsed_data:
+                return parsed_data
+            else:
+                print("⚠️  Warning: Data is not in the expected settings format")
+                return parsed_data
         else:
             print("❌ No data found for key 'settings'")
             return None
-
-        
             
-    except redis.ConnectionError as e:
-        print(f"❌ Failed to connect to Redis: {e}")
-        print("💡 Make sure Redis is running and accessible")
-        return None
     except Exception as e:
         print(f"❌ Error occurred: {e}")
         return None
 
-def read_mode_from_redis(host='localhost', port=6379, db=0, password=None) -> Optional[Dict[str, Any]]:
+def read_mode_from_redis(host=None, port=None, db=None, password=None) -> Optional[Dict[str, Any]]:
     """
     Read mode data from Redis.
+    
+    Args:
+        host (str, optional): Redis host address (uses config default if None)
+        port (int, optional): Redis port (uses config default if None)
+        db (int, optional): Redis database number (uses config default if None)
+        password (str, optional): Redis password (uses config default if None)
+    
+    Returns:
+        Dict[str, Any] or None: The mode object if successful, None if failed
     """
     try:
-        r = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
-            decode_responses=True
-        )
-        stored_mode = r.get('mode')
-        if stored_mode:
-            try:
-                parsed_mode = json.loads(stored_mode)
-                if isinstance(parsed_mode, dict) and 'current' in parsed_mode:
-                    return parsed_mode
-                else:
-                    print("⚠️  Warning: Data is not in the expected mode format")
-                    return parsed_mode
-            except json.JSONDecodeError:
-                print("⚠️  Warning: Data is not valid JSON")
-                return stored_mode
+        # Read the mode key using centralized function
+        parsed_mode = get_json_from_redis('mode', host, port, db, password)
+        if parsed_mode:
+            if isinstance(parsed_mode, dict) and 'current' in parsed_mode:
+                return parsed_mode
+            else:
+                print("⚠️  Warning: Data is not in the expected mode format")
+                return parsed_mode
         else:
             print("❌ No data found for key 'mode'")
             return None
-    except redis.ConnectionError as e:
-        print(f"❌ Failed to connect to Redis: {e}")
-        print("💡 Make sure Redis is running and accessible")
-        return None
     except Exception as e:
         print(f"❌ Error occurred: {e}")
         return None
@@ -188,90 +160,46 @@ def display_mode(mode: Dict[str, Any]) -> None:
     print(f"🔑 current value: {mode['current']}")
     print()
 
-def check_redis_connection(host='localhost', port=6379, db=0, password=None) -> bool:
-    """
-    Check if Redis connection is available.
-    
-    Args:
-        host (str): Redis host address
-        port (int): Redis port
-        db (int): Redis database number
-        password (str): Redis password if authentication is required
-    
-    Returns:
-        bool: True if connection successful, False otherwise
-    """
-    try:
-        r = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
-            decode_responses=True
-        )
-        r.ping()
-        return True
-    except:
-        return False
+# Note: check_redis_connection is now imported from data.redis module
 
 def main():
     """Main function to run the Redis settings reader."""
     print("📖 Redis Settings Reader Script")
     print("=" * 40)
     
-    # Configuration - modify these values if needed
-    REDIS_HOST = 'localhost'
-    REDIS_PORT = 6379
-    REDIS_DB = 0
-    REDIS_PASSWORD = None  # Set this if your Redis requires authentication
-    
-    print(f"🔧 Configuration:")
-    print(f"   Host: {REDIS_HOST}")
-    print(f"   Port: {REDIS_PORT}")
-    print(f"   Database: {REDIS_DB}")
-    print(f"   Password: {'Set' if REDIS_PASSWORD else 'None'}")
+    # Print connection info from centralized config
+    print_connection_info()
     print()
     
     # Check connection first
-    if not check_redis_connection(REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD):
+    if not check_redis_connection():
         print("❌ Cannot connect to Redis. Please check your configuration.")
         print("💡 Make sure Redis is running and accessible")
         sys.exit(1)
 
     # Read mode from Redis
-    mode = read_mode_from_redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD
-    )
-
+    mode = read_mode_from_redis()
     if mode is not None:
         # Display the mode
         display_mode(mode)
-        print("✅ Script completed successfully!")
+        print("✅ Mode read successfully!")
     else:
         print("❌ Failed to read mode from Redis")
         print("💡 Make sure the 'mode' key exists and contains valid data")
-        sys.exit(1)
 
+    print()
 
     # Read settings from Redis
-    settings = read_settings_from_redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD
-    )
-    
+    settings = read_settings_from_redis()
     if settings is not None:
         # Display the settings
         display_settings(settings)
-        print("✅ Script completed successfully!")
+        print("✅ Settings read successfully!")
     else:
         print("❌ Failed to read settings from Redis")
         print("💡 Make sure the 'settings' key exists and contains valid data")
-        sys.exit(1)
+    
+    print("✅ Script completed successfully!")
 
 if __name__ == "__main__":
     main()

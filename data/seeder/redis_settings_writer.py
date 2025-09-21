@@ -13,63 +13,51 @@ This script connects to Redis and writes two objects:
    - current: string property (default: "manual")
 """
 
-import redis
 import json
 import sys
 from datetime import datetime, time
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from data.redis import set_json_to_redis, get_json_from_redis, print_connection_info
 
-def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
+def write_settings_to_redis(host=None, port=None, db=None, password=None):
     """
-    Write settings data to Redis.
+    Write settings and mode data to Redis.
     
     Args:
-        host (str): Redis host address (default: localhost)
-        port (int): Redis port (default: 6379)
-        db (int): Redis database number (default: 0)
-        password (str): Redis password if authentication is required (default: None)
+        host (str, optional): Redis host address (uses config default if None)
+        port (int, optional): Redis port (uses config default if None)
+        db (int, optional): Redis database number (uses config default if None)
+        password (str, optional): Redis password (uses config default if None)
     """
     try:
-        # Create Redis connection
-        r = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
-            decode_responses=True
-        )
-        
-        # Test connection
-        r.ping()
         print("✅ Successfully connected to Redis")
         
-        # Create the settings object with the new structure
+        # Create the settings object
         settings = {
             "start_at": "20:00",  # Default start time at 20:00
             "sequence": [3600] * 7 + [0],  # 7 values of 3600, 1 value of 0
             "schedule": [False] * 6 + [True]  # 6 false values, 1 true value
         }
         
-        # Convert to JSON string for storage
-        settings_json = json.dumps(settings, indent=2)
-        
-        # Write to Redis with key 'settings'
-        r.set('settings', settings_json)
-        
         # Create the mode object
         mode = {
             "current": "manual"  # Default mode value
         }
         
-        # Convert mode to JSON string for storage
-        mode_json = json.dumps(mode, indent=2)
+        # Write settings to Redis using centralized function
+        if not set_json_to_redis('settings', settings, host, port, db, password):
+            print("❌ Failed to write settings to Redis")
+            return False
         
-        # Write mode to Redis with key 'mode'
-        r.set('mode', mode_json)
+        # Write mode to Redis using centralized function
+        if not set_json_to_redis('mode', mode, host, port, db, password):
+            print("❌ Failed to write mode to Redis")
+            return False
         
-        # Verify the data was written
-        stored_data = r.get('settings')
-        if stored_data:
-            parsed_data = json.loads(stored_data)
+        # Verify the settings data was written
+        parsed_data = get_json_from_redis('settings', host, port, db, password)
+        if parsed_data:
             print(f"✅ Successfully wrote settings to Redis key 'settings'")
             print(f"📊 Data structure:")
             print(f"   🔑 Key: settings")
@@ -82,9 +70,8 @@ def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
             return False
         
         # Verify the mode data was written
-        stored_mode = r.get('mode')
-        if stored_mode:
-            parsed_mode = json.loads(stored_mode)
+        parsed_mode = get_json_from_redis('mode', host, port, db, password)
+        if parsed_mode:
             print(f"✅ Successfully wrote mode to Redis key 'mode'")
             print(f"📊 Mode structure:")
             print(f"   🔑 Key: mode")
@@ -96,36 +83,24 @@ def write_settings_to_redis(host='localhost', port=6379, db=0, password=None):
             
         return True
         
-    except redis.ConnectionError as e:
-        print(f"❌ Failed to connect to Redis: {e}")
-        print("💡 Make sure Redis is running and accessible")
-        return False
     except Exception as e:
         print(f"❌ Error occurred: {e}")
         return False
 
-def read_settings_from_redis(host='localhost', port=6379, db=0, password=None):
+def read_settings_from_redis(host=None, port=None, db=None, password=None):
     """
     Read settings and mode data from Redis for verification.
     
     Args:
-        host (str): Redis host address (default: localhost)
-        port (int): Redis port (default: 6379)
-        db (int): Redis database number (default: 0)
-        password (str): Redis password if authentication is required (default: None)
+        host (str, optional): Redis host address (uses config default if None)
+        port (int, optional): Redis port (uses config default if None)
+        db (int, optional): Redis database number (uses config default if None)
+        password (str, optional): Redis password (uses config default if None)
     """
     try:
-        r = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
-            decode_responses=True
-        )
-        
-        stored_data = r.get('settings')
-        if stored_data:
-            parsed_data = json.loads(stored_data)
+        # Read settings data using centralized function
+        parsed_data = get_json_from_redis('settings', host, port, db, password)
+        if parsed_data:
             print(f"📖 Current settings in Redis:")
             print(f"   🔑 Key: settings")
             print(f"   🕐 start_at: {parsed_data['start_at']}")
@@ -133,18 +108,15 @@ def read_settings_from_redis(host='localhost', port=6379, db=0, password=None):
             print(f"   📅 schedule: {parsed_data['schedule']}")
         else:
             print("❌ No data found for key 'settings'")
-            parsed_data = None
         
-        # Read mode data
-        stored_mode = r.get('mode')
-        if stored_mode:
-            parsed_mode = json.loads(stored_mode)
+        # Read mode data using centralized function
+        parsed_mode = get_json_from_redis('mode', host, port, db, password)
+        if parsed_mode:
             print(f"📖 Current mode in Redis:")
             print(f"   🔑 Key: mode")
             print(f"   ⚙️  current: {parsed_mode['current']}")
         else:
             print("❌ No data found for key 'mode'")
-            parsed_mode = None
             
         return {"settings": parsed_data, "mode": parsed_mode}
             
@@ -156,36 +128,17 @@ if __name__ == "__main__":
     print("🚀 Redis Settings Writer Script")
     print("=" * 40)
     
-    # Configuration - modify these values if needed
-    REDIS_HOST = 'localhost'
-    REDIS_PORT = 6379
-    REDIS_DB = 0
-    REDIS_PASSWORD = None  # Set this if your Redis requires authentication
-    
-    print(f"🔧 Configuration:")
-    print(f"   Host: {REDIS_HOST}")
-    print(f"   Port: {REDIS_PORT}")
-    print(f"   Database: {REDIS_DB}")
-    print(f"   Password: {'Set' if REDIS_PASSWORD else 'None'}")
+    # Print connection info from centralized config
+    print_connection_info()
     print()
     
     # Write settings to Redis
-    success = write_settings_to_redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        password=REDIS_PASSWORD
-    )
+    success = write_settings_to_redis()
     
     if success:
         print()
         print("🔄 Verifying data...")
-        read_settings_from_redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            db=REDIS_DB,
-            password=REDIS_PASSWORD
-        )
+        read_settings_from_redis()
         print()
         print("✅ Script completed successfully!")
     else:
