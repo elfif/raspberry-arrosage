@@ -28,7 +28,7 @@ def clear_status() -> bool:
         print(f"❌ Error clearing status: {e}")
         return False
 
-def set_open_relay(relay_number: int) -> bool:
+def set_open_relay(relay_number: int, duration: int = 0) -> bool:
     """
     Set the opened relay status with current timestamp.
     
@@ -50,6 +50,9 @@ def set_open_relay(relay_number: int) -> bool:
             "opened_relay": relay_number,
             "opened_at": int(time.time())
         }
+
+        if duration > 0:
+            status_data["should_close_at"] = int(time.time()) + duration
         
         # Store in Redis using centralized function
         success = set_json_to_redis('status', status_data)

@@ -75,6 +75,7 @@ def is_current_step_finished() -> bool:
             print("⚠️  Status is missing required fields")
             return False
         
+        relay_should_close_at = status['should_close_at']
         opened_relay = status['opened_relay']
         opened_at = status['opened_at']
         
@@ -101,7 +102,7 @@ def is_current_step_finished() -> bool:
         
         # Step 5: Calculate if duration has elapsed
         current_time = int(time.time())
-        expected_finish_time = opened_at + duration
+        expected_finish_time = relay_should_close_at
         
         # Return True if current time is equal or greater than expected finish time
         is_finished = current_time >= expected_finish_time
@@ -163,7 +164,15 @@ def start_step(relay: int) -> bool:
         
         # Step 3: Update status
         print(f"3️⃣ Updating status for relay {relay}...")
-        if not set_open_relay(relay):
+
+        settings = get_json_from_redis('settings')
+        if settings is None:
+            print("❌ Could not retrieve settings from Redis")
+            return False
+        
+        sequence = settings['sequence']
+        duration = sequence[relay]
+        if not set_open_relay(relay, duration):
             print("❌ Failed to update relay status")
             return False
         

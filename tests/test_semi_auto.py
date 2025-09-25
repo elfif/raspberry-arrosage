@@ -38,7 +38,7 @@ def setup_semi_auto_settings():
     # Create test settings with fast relay durations
     test_settings = {
         "start_at": "00:00",  # Not used in semi-auto mode
-        "sequence": [10] * 8,  # All 8 relays stay open for 10 seconds
+        "sequence": [10] * 8,  # All 8 relays stay open for 30 seconds
         "schedule": [False] * 7  # Not used in semi-auto mode
     }
     
@@ -47,8 +47,8 @@ def setup_semi_auto_settings():
     if success:
         print(f"✅ Test settings configured:")
         print(f"   🤖 Mode: {MODE_SEMI_AUTO}")
-        print(f"   ⏱️  Relay duration: 10 seconds each")
-        print(f"   🎯 Total test duration: ~80 seconds (8 relays × 10s)")
+        print(f"   ⏱️  Relay duration: 30 seconds each")
+        print(f"   🎯 Total test duration: ~240 seconds (8 relays × 30s)")
         return True
     else:
         print("❌ Failed to write test settings to Redis")
@@ -76,7 +76,7 @@ def main_test():
     print("💡 The loop will:")
     print("   1. Detect the running sequence")
     print("   2. Automatically progress through all 8 relays")
-    print("   3. Each relay will run for 10 seconds")
+    print("   3. Each relay will run for 30 seconds")
     print("   4. Complete the full sequence automatically")
     print()
     print("⌨️  Press Ctrl+C to stop the test")

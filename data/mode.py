@@ -9,6 +9,7 @@ It supports getting and setting the current mode with validation.
 import json
 from typing import Optional
 from .redis import get_json_from_redis, set_json_to_redis
+import time
 
 # Mode constants - use these instead of raw strings
 MODE_MANUAL = "manual"
@@ -62,9 +63,16 @@ def set_mode(new_mode: str) -> bool:
     
     try:
         # Create the mode object
-        mode_data = {
-            "current": new_mode
-        }
+        if new_mode == MODE_PAUSE:
+            mode_data = {
+                "current": new_mode,
+                "previous_mode": get_mode(),
+                "paused_at": int(time.time())
+            }
+        else:
+            mode_data = {
+                "current": new_mode
+            }
         
         # Store in Redis using centralized function
         success = set_json_to_redis('mode', mode_data)
