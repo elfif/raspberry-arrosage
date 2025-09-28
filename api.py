@@ -303,6 +303,7 @@ async def update_settings(request: SettingsRequest):
             "schedule": request.schedule
         }
         
+        
         # Save to Redis
         print("💾 API: Saving settings to Redis...")
         from data.redis import set_json_to_redis
