@@ -77,8 +77,7 @@ def is_current_step_finished() -> bool:
         
         relay_should_close_at = status['should_close_at']
         opened_relay = status['opened_relay']
-        opened_at = status['opened_at']
-        
+                
         # Step 3: Get settings from Redis
         settings = get_json_from_redis('settings')
         if settings is None:

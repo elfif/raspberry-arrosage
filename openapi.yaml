@@ -1,0 +1,264 @@
+openapi: 3.0.3
+info:
+  title: Arrosage API
+  description: Simple API for controlling the watering system
+  version: 1.0.0
+  contact:
+    name: Arrosage System
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Development server
+
+paths:
+  /:
+    get:
+      summary: Get API information
+      description: Root endpoint with API information and available endpoints
+      operationId: getApiInfo
+      responses:
+        '200':
+          description: API information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Arrosage API"
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  endpoints:
+                    type: object
+                    properties:
+                      "GET /mode":
+                        type: string
+                        example: "Get current mode"
+                      "POST /mode":
+                        type: string
+                        example: "Set new mode"
+                      "GET /status":
+                        type: string
+                        example: "Get current sequence status"
+                      "POST /pause":
+                        type: string
+                        example: "Pause the system"
+                      "POST /resume":
+                        type: string
+                        example: "Resume the system"
+
+  /mode:
+    get:
+      summary: Get current mode
+      description: Get the current system mode
+      operationId: getCurrentMode
+      responses:
+        '200':
+          description: Current mode information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModeResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    
+    post:
+      summary: Set new mode
+      description: Set a new system mode
+      operationId: setCurrentMode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModeRequest'
+      responses:
+        '200':
+          description: Mode set successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModeResponse'
+        '400':
+          description: Invalid mode value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /status:
+    get:
+      summary: Get current status
+      description: Get the current sequence status
+      operationId: getCurrentStatus
+      responses:
+        '200':
+          description: Current status information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pause:
+    post:
+      summary: Pause system
+      description: Pause the watering system
+      operationId: pauseSystem
+      responses:
+        '200':
+          description: Pause action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /resume:
+    post:
+      summary: Resume system
+      description: Resume the watering system from pause
+      operationId: resumeSystem
+      responses:
+        '200':
+          description: Resume action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ModeRequest:
+      type: object
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum: [manual, auto, semi_auto, pause]
+          description: The mode to set
+          example: "auto"
+
+    ModeResponse:
+      type: object
+      required:
+        - current
+        - valid_modes
+      properties:
+        current:
+          type: string
+          enum: [manual, auto, semi_auto, pause]
+          description: Current system mode
+          example: "auto"
+        valid_modes:
+          type: array
+          items:
+            type: string
+            enum: [manual, auto, semi_auto, pause]
+          description: List of all valid modes
+          example: ["manual", "auto", "semi_auto", "pause"]
+
+    StatusResponse:
+      type: object
+      required:
+        - status
+        - has_active_sequence
+      properties:
+        status:
+          oneOf:
+            - type: "null"
+            - $ref: '#/components/schemas/SequenceStatus'
+          description: Current sequence status or null if no active sequence
+        has_active_sequence:
+          type: boolean
+          description: Whether there is an active sequence running
+          example: true
+
+    SequenceStatus:
+      type: object
+      properties:
+        opened_relay:
+          type: integer
+          minimum: 0
+          maximum: 7
+          description: Currently opened relay number (0-7)
+          example: 3
+        opened_at:
+          type: integer
+          description: Unix timestamp when relay was opened
+          example: 1758827415
+        should_close_at:
+          type: integer
+          description: Unix timestamp when relay should close
+          example: 1758827445
+
+    ActionResponse:
+      type: object
+      required:
+        - success
+        - message
+        - current_mode
+      properties:
+        success:
+          type: boolean
+          description: Whether the action was successful
+          example: true
+        message:
+          type: string
+          description: Human-readable message about the action result
+          example: "System paused successfully"
+        current_mode:
+          type: string
+          enum: [manual, auto, semi_auto, pause]
+          nullable: true
+          description: Current system mode after the action
+          example: "pause"
+
+    ErrorResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Error message
+          example: "Invalid mode 'invalid'. Valid modes are: ['manual', 'auto', 'semi_auto', 'pause']"
+
+tags:
+  - name: Mode
+    description: System mode management
+  - name: Status
+    description: Sequence status information
+  - name: Control
+    description: System control actions
