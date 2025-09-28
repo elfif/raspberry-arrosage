@@ -50,6 +50,15 @@ paths:
                       "POST /resume":
                         type: string
                         example: "Resume the system"
+                      "POST /reset":
+                        type: string
+                        example: "Reset the system"
+                      "GET /settings":
+                        type: string
+                        example: "Get current settings"
+                      "POST /settings":
+                        type: string
+                        example: "Update settings"
 
   /mode:
     get:
@@ -157,6 +166,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /reset:
+    post:
+      summary: Reset system
+      description: Reset the watering system to initial state
+      operationId: resetSystem
+      responses:
+        '200':
+          description: Reset action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /settings:
+    get:
+      summary: Get current settings
+      description: Get the current system settings including sequence durations, schedule, and start time
+      operationId: getCurrentSettings
+      responses:
+        '200':
+          description: Current settings information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '404':
+          description: Settings not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    
+    post:
+      summary: Update settings
+      description: Update the system settings with validation
+      operationId: updateSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsRequest'
+      responses:
+        '200':
+          description: Settings updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   schemas:
     ModeRequest:
@@ -205,6 +288,62 @@ components:
           description: Whether there is an active sequence running
           example: true
 
+    SettingsRequest:
+      type: object
+      required:
+        - start_at
+        - sequence
+        - schedule
+      properties:
+        start_at:
+          type: string
+          pattern: "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+          description: Start time in HH:MM format (24-hour)
+          example: "20:00"
+        sequence:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+          minItems: 8
+          maxItems: 8
+          description: Array of 8 duration values in seconds for each relay (0-7)
+          example: [3600, 3600, 3600, 3600, 3600, 3600, 3600, 0]
+        schedule:
+          type: array
+          items:
+            type: boolean
+          minItems: 7
+          maxItems: 7
+          description: Array of 7 boolean values for each day of the week (Monday=0, Sunday=6)
+          example: [false, false, false, false, false, false, true]
+
+    SettingsResponse:
+      type: object
+      properties:
+        start_at:
+          type: string
+          pattern: "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+          description: Start time in HH:MM format (24-hour)
+          example: "20:00"
+        sequence:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+          minItems: 8
+          maxItems: 8
+          description: Array of 8 duration values in seconds for each relay (0-7)
+          example: [3600, 3600, 3600, 3600, 3600, 3600, 3600, 0]
+        schedule:
+          type: array
+          items:
+            type: boolean
+          minItems: 7
+          maxItems: 7
+          description: Array of 7 boolean values for each day of the week (Monday=0, Sunday=6)
+          example: [false, false, false, false, false, false, true]
+
     SequenceStatus:
       type: object
       properties:
@@ -237,7 +376,10 @@ components:
         message:
           type: string
           description: Human-readable message about the action result
-          example: "System paused successfully"
+          examples:
+            - "System paused successfully"
+            - "System resumed successfully"
+            - "System reset successfully"
         current_mode:
           type: string
           enum: [manual, auto, semi_auto, pause]
@@ -261,4 +403,4 @@ tags:
   - name: Status
     description: Sequence status information
   - name: Control
-    description: System control actions
+    description: System control actions (pause, resume, reset)
