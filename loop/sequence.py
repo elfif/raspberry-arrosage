@@ -110,7 +110,7 @@ def is_current_step_finished() -> bool:
             print(f"✅ Current step finished - Relay {opened_relay} has been open for {duration} seconds")
         else:
             remaining_time = expected_finish_time - current_time
-            print(f"⏳ Current step in progress - Relay {opened_relay}, {remaining_time}s remaining")
+            #print(f"⏳ Current step in progress - Relay {opened_relay}, {remaining_time}s remaining")
         
         return is_finished
         
