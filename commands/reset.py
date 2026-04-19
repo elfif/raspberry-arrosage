@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hardware.relay.relays import close_all_relays
 from data.status import clear_status
+from data.history import log_current_relay_close
 
 def reset():
     """
@@ -13,7 +14,10 @@ def reset():
     """
     try:
         print("🔄 Starting system reset...")
-        
+
+        # Record any currently-open relay before closing
+        log_current_relay_close()
+
         # Close all relays
         print("1️⃣ Closing all relays...")
         try:

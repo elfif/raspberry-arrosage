@@ -17,13 +17,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.mode import get_mode, MODE_AUTO, MODE_SEMI_AUTO
 from data.status import get_status
 from data.redis import get_json_from_redis
+from data.history import init_history_db, log_current_relay_close
 from loop.sequence import is_current_step_finished, start_step, start_sequence
 from hardware.relay.relays import close_all_relays
 from data.status import clear_status
 
 def main():
     """Main control loop for the arrosage system."""
-    
+
+    init_history_db()
+
     try:
         while True:
             # Get current mode
@@ -43,6 +46,7 @@ def main():
                             start_step(next_relay)
                         else:
                             # Sequence complete
+                            log_current_relay_close()
                             close_all_relays()
                             clear_status()
                             print("✅ Sequence completed - all steps finished")

@@ -15,6 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.status import clear_status, set_open_relay, get_status
 from data.redis import get_json_from_redis
+from data.history import log_current_relay_close
 from hardware.relay.relays import close_all_relays, open_relay
 
 def start_sequence() -> bool:
@@ -142,7 +143,10 @@ def start_step(relay: int) -> bool:
     
     try:
         print(f"🔄 Starting step for relay {relay}...")
-        
+
+        # Record the currently-open relay (if any) as closed before moving on
+        log_current_relay_close()
+
         # Step 1: Close all relays
         print("1️⃣ Closing all relays...")
         try:

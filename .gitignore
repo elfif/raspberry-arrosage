@@ -132,3 +132,8 @@ dmypy.json
 redis_config.py
 *.log
 .DS_Store
+
+# Relay activity history (SQLite)
+data/history.db
+data/history.db-wal
+data/history.db-shm

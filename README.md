@@ -143,3 +143,45 @@ SETTINGS_ARRAY_SIZE = 8        # Change array size
 1. **Connection Error**: Make sure Redis is running and accessible
 2. **Authentication Error**: Set the correct password in `redis_config.py`
 3. **Permission Error**: Ensure your user has access to the Redis server
+
+## Relay Activity History (SQLite)
+
+In addition to the live Redis state, every relay open/close cycle is
+persisted to a small SQLite database for reporting (dashboards, past
+runs). Redis remains the state manager; SQLite is the durable log.
+
+### Storage
+
+- File: `data/history.db` (git-ignored, plus `history.db-wal` / `history.db-shm`)
+- Pragmas: `journal_mode=WAL`, `synchronous=NORMAL` (Pi / SD-card friendly)
+- One row per relay activity, inserted **when the relay is closed** so the
+  recorded `duration_s` is the actual time the relay stayed open.
+
+### Schema
+
+```sql
+CREATE TABLE relay_activity (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    relay_id    INTEGER NOT NULL,   -- 0..7
+    opened_at   INTEGER NOT NULL,   -- unix epoch seconds (UTC)
+    duration_s  INTEGER NOT NULL,
+    mode        TEXT    NOT NULL    -- 'auto' | 'semi_auto' | 'manual'
+);
+```
+
+### Inspect with the CLI
+
+```bash
+sqlite3 data/history.db 'SELECT * FROM relay_activity ORDER BY id DESC LIMIT 10;'
+```
+
+### API
+
+- `GET /history?page=1&page_size=100&relay_id=&start=&end=` — paginated
+  list, newest first. `start` / `end` are unix seconds (UTC).
+- `GET /history/stats?period=month&year=2026&month=4` — aggregate totals
+  and per-relay breakdown. `period=year&year=2026` also supported.
+
+Period boundaries (`start_at` / `end_at`) for `/history/stats` are
+computed in the Pi's local timezone, so "April" means the whole local
+calendar month.

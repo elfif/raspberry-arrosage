@@ -71,6 +71,12 @@ paths:
                       "POST /settings":
                         type: string
                         example: "Update settings"
+                      "GET /history":
+                        type: string
+                        example: "Paginated list of relay activity history"
+                      "GET /history/stats":
+                        type: string
+                        example: "Aggregate history stats for a month or year"
 
   /mode:
     get:
@@ -466,6 +472,133 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /history:
+    get:
+      summary: List relay activity history
+      description: |
+        Paginated list of relay activity records (one row per relay
+        open/close cycle), sorted newest first. Each record captures
+        which relay was opened, when (unix epoch seconds, UTC), how long
+        it stayed open, and the mode the system was in.
+      operationId: getHistory
+      tags:
+        - History
+      parameters:
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number, 1-indexed
+        - in: query
+          name: page_size
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          description: Items per page (max 500)
+        - in: query
+          name: relay_id
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 7
+          description: Optional filter by relay id (0-7)
+        - in: query
+          name: start
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Inclusive lower bound on opened_at (unix seconds)
+        - in: query
+          name: end
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Exclusive upper bound on opened_at (unix seconds)
+      responses:
+        '200':
+          description: Paginated history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryListResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /history/stats:
+    get:
+      summary: Aggregate history stats
+      description: |
+        Total relay-open duration and per-relay breakdown for a given
+        month or year. Period boundaries are resolved in the Pi's local
+        timezone (so "April" means the whole local calendar month).
+        `per_relay` always includes all 8 relays (zero-filled when
+        inactive).
+      operationId: getHistoryStats
+      tags:
+        - History
+      parameters:
+        - in: query
+          name: period
+          required: true
+          schema:
+            type: string
+            enum: [month, year]
+          description: Aggregation period
+        - in: query
+          name: year
+          required: true
+          schema:
+            type: integer
+            minimum: 2000
+            maximum: 2100
+          description: 4-digit year
+        - in: query
+          name: month
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+          description: Month 1-12 (required when period=month)
+      responses:
+        '200':
+          description: Aggregate statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryStatsResponse'
+        '422':
+          description: Validation error (invalid period, year, month, or missing month)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   schemas:
     ModeRequest:
@@ -690,6 +823,150 @@ components:
             $ref: '#/components/schemas/RelayState'
           description: Per-relay state for all 8 relays (0-7). At most one relay is open at a time.
 
+    RelayActivityItem:
+      type: object
+      required:
+        - id
+        - relay_id
+        - opened_at
+        - duration_s
+        - mode
+      properties:
+        id:
+          type: integer
+          description: Auto-incrementing row id
+          example: 42
+        relay_id:
+          type: integer
+          minimum: 0
+          maximum: 7
+          description: Relay identifier (0-7)
+          example: 3
+        opened_at:
+          type: integer
+          description: Unix timestamp (UTC seconds) when the relay was opened
+          example: 1758827415
+        duration_s:
+          type: integer
+          minimum: 0
+          description: How long the relay stayed open, in seconds
+          example: 1800
+        mode:
+          type: string
+          enum: [auto, semi_auto, manual]
+          description: System mode at the time the relay was opened
+          example: "auto"
+
+    HistoryListResponse:
+      type: object
+      required:
+        - items
+        - page
+        - page_size
+        - total
+        - total_pages
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelayActivityItem'
+          description: History rows for the current page (newest first)
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 500
+          example: 100
+        total:
+          type: integer
+          minimum: 0
+          description: Total number of matching rows across all pages
+          example: 42
+        total_pages:
+          type: integer
+          minimum: 0
+          description: Total number of pages given page_size (0 when total=0)
+          example: 1
+
+    RelayStat:
+      type: object
+      required:
+        - relay_id
+        - total_duration_s
+        - count
+      properties:
+        relay_id:
+          type: integer
+          minimum: 0
+          maximum: 7
+          example: 3
+        total_duration_s:
+          type: integer
+          minimum: 0
+          description: Sum of duration_s for this relay in the period
+          example: 5400
+        count:
+          type: integer
+          minimum: 0
+          description: Number of activities recorded for this relay in the period
+          example: 2
+
+    HistoryStatsResponse:
+      type: object
+      required:
+        - period
+        - year
+        - start_at
+        - end_at
+        - total_duration_s
+        - total_count
+        - per_relay
+      properties:
+        period:
+          type: string
+          enum: [month, year]
+          example: "month"
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+          example: 2026
+        month:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 12
+          description: Month 1-12 (null when period=year)
+          example: 4
+        start_at:
+          type: integer
+          description: Inclusive lower bound of the period (unix seconds, local tz)
+          example: 1774994400
+        end_at:
+          type: integer
+          description: Exclusive upper bound of the period (unix seconds, local tz)
+          example: 1777586400
+        total_duration_s:
+          type: integer
+          minimum: 0
+          description: Sum of duration_s across all relays in the period
+          example: 43200
+        total_count:
+          type: integer
+          minimum: 0
+          description: Total number of history rows in the period
+          example: 24
+        per_relay:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/RelayStat'
+          description: Per-relay breakdown, always 8 entries (relay_id 0..7), zero-filled when inactive
+
 tags:
   - name: Mode
     description: System mode management
@@ -701,3 +978,5 @@ tags:
     description: Manual relay control (open/close) and per-relay status
   - name: Settings
     description: System settings (start time, sequence durations, weekly schedule)
+  - name: History
+    description: Relay activity history (list + aggregate stats for dashboards)

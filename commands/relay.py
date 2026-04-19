@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.mode import get_mode, MODE_MANUAL
 from data.status import set_open_relay, clear_status
+from data.history import log_current_relay_close
 from hardware.relay.relays import close_all_relays, open_relay
 
 logger = logging.getLogger("arrosage_relay")
@@ -46,6 +47,9 @@ def open_relay_manual(relay_id: int) -> bool:
                 f"Cannot open relay. System is not in MANUAL mode (current: {current_mode})"
             )
             return False
+
+        # Record any previously-open manual relay before switching
+        log_current_relay_close("manual")
 
         close_all_relays()
         open_relay(relay_id)
@@ -79,6 +83,9 @@ def close_relays_manual() -> bool:
                 f"Cannot close relays. System is not in MANUAL mode (current: {current_mode})"
             )
             return False
+
+        # Record the currently-open manual relay (if any) before closing
+        log_current_relay_close("manual")
 
         close_all_relays()
 

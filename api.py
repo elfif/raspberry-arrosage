@@ -6,7 +6,7 @@ This API provides endpoints to interact with the watering system mode.
 No authentication or HTTPS - simple HTTP endpoints for mode management.
 """
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sys
@@ -14,7 +14,7 @@ import os
 import logging
 import time
 import traceback as tb
-from typing import Callable
+from typing import Callable, Optional
 
 # Add current directory to path to import data modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +29,7 @@ logger = logging.getLogger("arrosage_api")
 
 from data.mode import get_mode, set_mode, VALID_MODES, MODE_SEMI_AUTO, MODE_MANUAL
 from data.status import get_status
+from data.history import init_history_db, list_history, get_stats
 try:
     from commands.pause import pause
     from commands.resume import resume
@@ -42,6 +43,9 @@ try:
 except Exception as e:
     logger.error(f"❌ Error importing commands: {e}")
     logger.error(tb.format_exc())
+
+# Initialize the relay activity history SQLite DB (idempotent)
+init_history_db()
 
 # Create FastAPI app
 app = FastAPI(
@@ -153,6 +157,35 @@ class RelayStatusResponse(BaseModel):
     current_mode: str | None
     relays: list[RelayState]
 
+class RelayActivityItem(BaseModel):
+    id: int
+    relay_id: int
+    opened_at: int
+    duration_s: int
+    mode: str
+
+class HistoryListResponse(BaseModel):
+    items: list[RelayActivityItem]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+class RelayStat(BaseModel):
+    relay_id: int
+    total_duration_s: int
+    count: int
+
+class HistoryStatsResponse(BaseModel):
+    period: str
+    year: int
+    month: int | None
+    start_at: int
+    end_at: int
+    total_duration_s: int
+    total_count: int
+    per_relay: list[RelayStat]
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
@@ -171,7 +204,9 @@ async def root():
             "POST /relay/close": "Close all relays (MANUAL mode only)",
             "GET /relays": "Get current per-relay status",
             "GET /settings": "Get current settings",
-            "POST /settings": "Update settings"
+            "POST /settings": "Update settings",
+            "GET /history": "Paginated list of relay activity history",
+            "GET /history/stats": "Aggregate history stats for a month or year"
         }
     }
 
@@ -607,6 +642,91 @@ async def update_settings(request: SettingsRequest):
         logger.error(tb.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+@app.get("/history", response_model=HistoryListResponse)
+async def get_history(
+    page: int = Query(1, ge=1, description="Page number, 1-indexed"),
+    page_size: int = Query(100, ge=1, le=500, description="Items per page (max 500)"),
+    relay_id: Optional[int] = Query(None, ge=0, le=7, description="Filter by relay (0-7)"),
+    start: Optional[int] = Query(None, ge=0, description="Inclusive lower bound (unix seconds)"),
+    end: Optional[int] = Query(None, ge=0, description="Exclusive upper bound (unix seconds)"),
+):
+    """
+    Paginated list of relay activity history, newest first.
+
+    Each item represents one relay that was opened and then closed. The
+    `opened_at` field is a unix epoch (UTC) timestamp; `duration_s` is how
+    long the relay stayed open in seconds. Default page size is 100.
+    """
+    try:
+        logger.info(
+            f"GET /history page={page} page_size={page_size} "
+            f"relay_id={relay_id} start={start} end={end}"
+        )
+
+        if start is not None and end is not None and start >= end:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'start' ({start}) must be strictly less than 'end' ({end})",
+            )
+
+        result = list_history(
+            page=page,
+            page_size=page_size,
+            relay_id=relay_id,
+            start=start,
+            end=end,
+        )
+        return HistoryListResponse(**result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in GET /history: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.get("/history/stats", response_model=HistoryStatsResponse)
+async def get_history_stats(
+    period: str = Query(..., description="'month' or 'year'"),
+    year: int = Query(..., ge=2000, le=2100, description="4-digit year"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="Month 1-12 (required when period=month)"),
+):
+    """
+    Return aggregate relay activity stats for a month or year.
+
+    Boundaries are resolved in the Pi's LOCAL timezone (so "April" means
+    the whole local calendar month). Response includes the overall total
+    duration and count plus a per-relay breakdown covering all 8 relays
+    (zero-filled when no activity).
+    """
+    try:
+        logger.info(f"GET /history/stats period={period} year={year} month={month}")
+
+        if period not in ("month", "year"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid period '{period}'. Must be 'month' or 'year'.",
+            )
+        if period == "month" and month is None:
+            raise HTTPException(
+                status_code=422,
+                detail="'month' query parameter is required when period='month'.",
+            )
+
+        result = get_stats(period=period, year=year, month=month)
+        return HistoryStatsResponse(**result)
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in GET /history/stats: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("🚀 Starting Arrosage API...")
@@ -624,6 +744,8 @@ if __name__ == "__main__":
     logger.info("   GET  /relays - Get current per-relay status")
     logger.info("   GET  /settings - Get current settings")
     logger.info("   POST /settings - Update settings")
+    logger.info("   GET  /history - Paginated relay activity history")
+    logger.info("   GET  /history/stats - Aggregate history stats (month|year)")
     logger.info("💡 Example usage:")
     logger.info("   curl http://localhost:8000/mode")
     logger.info("   curl http://localhost:8000/status")
