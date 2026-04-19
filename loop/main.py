@@ -67,8 +67,8 @@ def main():
                                 start_sequence()
                 
             
-            # Sleep for 0.1 seconds
-            time.sleep(0.1)
+            # Sleep for 0.2 seconds
+            time.sleep(0.2)
             
     except KeyboardInterrupt:
         pass

@@ -7,9 +7,11 @@ It supports getting and setting the current mode with validation.
 """
 
 import json
+import time
 from typing import Optional
 from .redis import get_json_from_redis, set_json_to_redis
-import time
+from loop.sequence import start_sequence
+from hardware.relay.relays import close_all_relays
 
 # Mode constants - use these instead of raw strings
 MODE_MANUAL = "manual"
@@ -60,7 +62,14 @@ def set_mode(new_mode: str) -> bool:
         print(f"❌ Invalid mode: {new_mode}")
         print(f"💡 Valid modes are: {', '.join(VALID_MODES)}")
         return False
-    
+
+    #Get the current mode
+    current_mode = get_mode()   
+
+    if current_mode == new_mode:
+        print(f"❌ Mode {new_mode} is already set")
+        return True
+
     try:
         # Create the mode object
         if new_mode == MODE_PAUSE:
@@ -84,10 +93,14 @@ def set_mode(new_mode: str) -> bool:
         verification = get_mode()
         if verification == new_mode:
             print(f"✅ Successfully set mode to: {new_mode}")
-            return True
         else:
             print(f"❌ Mode verification failed. Expected: {new_mode}, Got: {verification}")
-            return False
+            return False      
+
+        if new_mode == MODE_PAUSE and current_mode != MODE_PAUSE:
+            close_all_relays()
+            
+        return True
             
     except Exception as e:
         print(f"❌ Unexpected error setting mode: {e}")

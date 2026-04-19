@@ -15,7 +15,7 @@ import os
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.redis import set_json_to_redis
+from data.redis import set_json_to_redis, get_json_from_redis
 from data.mode import set_mode, MODE_SEMI_AUTO
 from loop.sequence import start_sequence
 from loop.main import main
@@ -34,13 +34,17 @@ def setup_semi_auto_settings():
         print("❌ Failed to set mode to SEMI_AUTO")
         return False
     print(f"✅ Mode set to: {MODE_SEMI_AUTO}")
+
+    # get the curreent settings from Redis
+    current_settings = get_json_from_redis('settings')
+    if current_settings is None:
+        print("❌ Failed to get current settings from Redis")
+        return False
+    print(f"✅ Current settings: {current_settings}")
     
-    # Create test settings with fast relay durations
-    test_settings = {
-        "start_at": "00:00",  # Not used in semi-auto mode
-        "sequence": [10] * 8,  # All 8 relays stay open for 30 seconds
-        "schedule": [False] * 7  # Not used in semi-auto mode
-    }
+    # Update the sequence with fast relay durations
+    test_settings = current_settings
+    test_settings['sequence'] = [10] * 8
     
     # Write settings to Redis
     success = set_json_to_redis('settings', test_settings)

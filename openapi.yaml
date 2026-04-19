@@ -53,6 +53,18 @@ paths:
                       "POST /reset":
                         type: string
                         example: "Reset the system"
+                      "POST /start":
+                        type: string
+                        example: "Start sequence (SEMI_AUTO mode only)"
+                      "POST /relay/open":
+                        type: string
+                        example: "Open a single relay (MANUAL mode only)"
+                      "POST /relay/close":
+                        type: string
+                        example: "Close all relays (MANUAL mode only)"
+                      "GET /relays":
+                        type: string
+                        example: "Get current per-relay status"
                       "GET /settings":
                         type: string
                         example: "Get current settings"
@@ -65,6 +77,8 @@ paths:
       summary: Get current mode
       description: Get the current system mode
       operationId: getCurrentMode
+      tags:
+        - Mode
       responses:
         '200':
           description: Current mode information
@@ -83,6 +97,8 @@ paths:
       summary: Set new mode
       description: Set a new system mode
       operationId: setCurrentMode
+      tags:
+        - Mode
       requestBody:
         required: true
         content:
@@ -102,6 +118,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request body validation error (e.g. missing or malformed fields)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -114,6 +136,8 @@ paths:
       summary: Get current status
       description: Get the current sequence status
       operationId: getCurrentStatus
+      tags:
+        - Status
       responses:
         '200':
           description: Current status information
@@ -133,6 +157,8 @@ paths:
       summary: Pause system
       description: Pause the watering system
       operationId: pauseSystem
+      tags:
+        - Control
       responses:
         '200':
           description: Pause action result
@@ -152,6 +178,8 @@ paths:
       summary: Resume system
       description: Resume the watering system from pause
       operationId: resumeSystem
+      tags:
+        - Control
       responses:
         '200':
           description: Resume action result
@@ -171,6 +199,8 @@ paths:
       summary: Reset system
       description: Reset the watering system to initial state
       operationId: resetSystem
+      tags:
+        - Control
       responses:
         '200':
           description: Reset action result
@@ -185,11 +215,205 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /start:
+    post:
+      summary: Start sequence
+      description: Start a watering sequence (only works in SEMI_AUTO mode)
+      operationId: startSystem
+      tags:
+        - Control
+      responses:
+        '200':
+          description: Start action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+              examples:
+                success:
+                  summary: Successful start
+                  value:
+                    success: true
+                    message: "Sequence started successfully"
+                    current_mode: "semi_auto"
+                wrongMode:
+                  summary: Wrong mode
+                  value:
+                    success: false
+                    message: "Cannot start sequence. System must be in SEMI_AUTO mode (current mode: auto)"
+                    current_mode: "auto"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /relay/open:
+    post:
+      summary: Open a single relay
+      description: Open the specified relay (only works in MANUAL mode). Any previously opened relay is closed first.
+      operationId: openRelay
+      tags:
+        - Relay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayOpenRequest'
+      responses:
+        '200':
+          description: Relay open action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatusResponse'
+              examples:
+                success:
+                  summary: Relay opened successfully
+                  value:
+                    success: true
+                    message: "Relay 2 opened successfully"
+                    current_mode: "manual"
+                    relays:
+                      - { relay_id: 0, is_open: false }
+                      - { relay_id: 1, is_open: false }
+                      - { relay_id: 2, is_open: true }
+                      - { relay_id: 3, is_open: false }
+                      - { relay_id: 4, is_open: false }
+                      - { relay_id: 5, is_open: false }
+                      - { relay_id: 6, is_open: false }
+                      - { relay_id: 7, is_open: false }
+                wrongMode:
+                  summary: Wrong mode
+                  value:
+                    success: false
+                    message: "Cannot open relay. System must be in MANUAL mode (current mode: auto)"
+                    current_mode: "auto"
+                    relays:
+                      - { relay_id: 0, is_open: false }
+                      - { relay_id: 1, is_open: false }
+                      - { relay_id: 2, is_open: false }
+                      - { relay_id: 3, is_open: false }
+                      - { relay_id: 4, is_open: false }
+                      - { relay_id: 5, is_open: false }
+                      - { relay_id: 6, is_open: false }
+                      - { relay_id: 7, is_open: false }
+        '400':
+          description: Invalid relay_id (must be an integer between 0 and 7)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidId:
+                  summary: Invalid relay_id
+                  value:
+                    detail: "Invalid relay_id '8'. Must be an integer between 0 and 7."
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /relay/close:
+    post:
+      summary: Close all relays
+      description: Close all relays (only works in MANUAL mode).
+      operationId: closeRelays
+      tags:
+        - Relay
+      responses:
+        '200':
+          description: Relay close action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatusResponse'
+              examples:
+                success:
+                  summary: All relays closed
+                  value:
+                    success: true
+                    message: "All relays closed successfully"
+                    current_mode: "manual"
+                    relays:
+                      - { relay_id: 0, is_open: false }
+                      - { relay_id: 1, is_open: false }
+                      - { relay_id: 2, is_open: false }
+                      - { relay_id: 3, is_open: false }
+                      - { relay_id: 4, is_open: false }
+                      - { relay_id: 5, is_open: false }
+                      - { relay_id: 6, is_open: false }
+                      - { relay_id: 7, is_open: false }
+                wrongMode:
+                  summary: Wrong mode
+                  value:
+                    success: false
+                    message: "Cannot close relays. System must be in MANUAL mode (current mode: auto)"
+                    current_mode: "auto"
+                    relays:
+                      - { relay_id: 0, is_open: false }
+                      - { relay_id: 1, is_open: false }
+                      - { relay_id: 2, is_open: false }
+                      - { relay_id: 3, is_open: false }
+                      - { relay_id: 4, is_open: false }
+                      - { relay_id: 5, is_open: false }
+                      - { relay_id: 6, is_open: false }
+                      - { relay_id: 7, is_open: false }
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /relays:
+    get:
+      summary: Get current relay status
+      description: Return the per-relay open/closed status. Works in any mode. State is derived from the system status (at most one relay is open at a time).
+      operationId: getRelaysStatus
+      tags:
+        - Relay
+      responses:
+        '200':
+          description: Current per-relay status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatusResponse'
+              examples:
+                success:
+                  summary: One relay currently open
+                  value:
+                    success: true
+                    message: "Current relay status"
+                    current_mode: "manual"
+                    relays:
+                      - { relay_id: 0, is_open: false }
+                      - { relay_id: 1, is_open: false }
+                      - { relay_id: 2, is_open: true }
+                      - { relay_id: 3, is_open: false }
+                      - { relay_id: 4, is_open: false }
+                      - { relay_id: 5, is_open: false }
+                      - { relay_id: 6, is_open: false }
+                      - { relay_id: 7, is_open: false }
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /settings:
     get:
       summary: Get current settings
       description: Get the current system settings including sequence durations, schedule, and start time
       operationId: getCurrentSettings
+      tags:
+        - Settings
       responses:
         '200':
           description: Current settings information
@@ -214,6 +438,8 @@ paths:
       summary: Update settings
       description: Update the system settings with validation
       operationId: updateSettings
+      tags:
+        - Settings
       requestBody:
         required: true
         content:
@@ -320,6 +546,10 @@ components:
 
     SettingsResponse:
       type: object
+      required:
+        - start_at
+        - sequence
+        - schedule
       properties:
         start_at:
           type: string
@@ -346,6 +576,9 @@ components:
 
     SequenceStatus:
       type: object
+      required:
+        - opened_relay
+        - opened_at
       properties:
         opened_relay:
           type: integer
@@ -359,7 +592,7 @@ components:
           example: 1758827415
         should_close_at:
           type: integer
-          description: Unix timestamp when relay should close
+          description: Unix timestamp when relay should close (only present when the relay has a non-zero duration)
           example: 1758827445
 
     ActionResponse:
@@ -380,6 +613,7 @@ components:
             - "System paused successfully"
             - "System resumed successfully"
             - "System reset successfully"
+            - "Sequence started successfully"
         current_mode:
           type: string
           enum: [manual, auto, semi_auto, pause]
@@ -397,10 +631,73 @@ components:
           description: Error message
           example: "Invalid mode 'invalid'. Valid modes are: ['manual', 'auto', 'semi_auto', 'pause']"
 
+    RelayOpenRequest:
+      type: object
+      required:
+        - relay_id
+      properties:
+        relay_id:
+          type: integer
+          minimum: 0
+          maximum: 7
+          description: Relay identifier (0-7)
+          example: 2
+
+    RelayState:
+      type: object
+      required:
+        - relay_id
+        - is_open
+      properties:
+        relay_id:
+          type: integer
+          minimum: 0
+          maximum: 7
+          description: Relay identifier (0-7)
+          example: 2
+        is_open:
+          type: boolean
+          description: Whether this relay is currently open (water flowing)
+          example: false
+
+    RelayStatusResponse:
+      type: object
+      required:
+        - success
+        - message
+        - current_mode
+        - relays
+      properties:
+        success:
+          type: boolean
+          description: Whether the action was successful (always true for GET /relays)
+          example: true
+        message:
+          type: string
+          description: Human-readable message about the action result or status
+          example: "Relay 3 opened successfully"
+        current_mode:
+          type: string
+          enum: [manual, auto, semi_auto, pause]
+          nullable: true
+          description: Current system mode
+          example: "manual"
+        relays:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/RelayState'
+          description: Per-relay state for all 8 relays (0-7). At most one relay is open at a time.
+
 tags:
   - name: Mode
     description: System mode management
   - name: Status
     description: Sequence status information
   - name: Control
-    description: System control actions (pause, resume, reset)
+    description: System control actions (pause, resume, reset, start)
+  - name: Relay
+    description: Manual relay control (open/close) and per-relay status
+  - name: Settings
+    description: System settings (start time, sequence durations, weekly schedule)

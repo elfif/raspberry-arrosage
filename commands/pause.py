@@ -8,12 +8,15 @@ When paused, the system sets mode to PAUSE and closes all relays.
 
 import sys
 import os
+import logging
+import traceback
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.mode import set_mode, MODE_PAUSE
-from hardware.relay.relays import close_all_relays
+
+logger = logging.getLogger("arrosage_pause")
 
 def pause() -> bool:
     """
@@ -27,21 +30,20 @@ def pause() -> bool:
         bool: True if pause was successful, False otherwise
     """
     try:
-        from data.mode import get_mode
-        if get_mode() == MODE_PAUSE:
-            return True
+        logger.info("Pausing system...")
+        
         # Set mode to PAUSE
         if not set_mode(MODE_PAUSE):
+            logger.error("Failed to set mode to PAUSE")
             return False
         
-        # Close all relays
-        try:
-            close_all_relays()
-            return True
-        except Exception as e:
-            return False
+        logger.info("Mode set to PAUSE")
+        
+        return True
         
     except Exception as e:
+        logger.error(f"Exception during pause: {e}")
+        logger.error(traceback.format_exc())
         return False
 
 if __name__ == "__main__":
