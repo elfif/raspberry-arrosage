@@ -9,6 +9,7 @@ and performs automated watering operations when in automatic or semi-automatic m
 import time
 import sys
 import os
+import threading
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,6 +24,9 @@ from hardware.relay.relays import close_all_relays
 from data.status import clear_status
 from hardware.screen.display import Display
 from hardware.screen.renderer import DisplayState, render
+from network.config import load_config as load_network_config
+from network.state import KEY_MODE as NETWORK_KEY_MODE, MODE_AP as NETWORK_MODE_AP
+from network.watchdog import run as run_network_watchdog
 
 
 RENDER_PERIOD_S = 1.0
@@ -44,6 +48,8 @@ def _build_display_state(now: datetime) -> DisplayState:
         start_at = settings.get("start_at") if isinstance(settings, dict) else None
         next_sequence = compute_next_sequence(now, schedule, start_at)
 
+    wifi_ap_active = get_json_from_redis(NETWORK_KEY_MODE) == NETWORK_MODE_AP
+
     return DisplayState(
         mode=mode,
         now=now,
@@ -51,6 +57,7 @@ def _build_display_state(now: datetime) -> DisplayState:
         opened_relay=opened_relay,
         should_close_at=should_close_at,
         next_sequence=next_sequence,
+        wifi_ap_active=wifi_ap_active,
     )
 
 
@@ -70,6 +77,17 @@ def main():
 
     init_history_db()
 
+    try:
+        net_cfg = load_network_config()
+        threading.Thread(
+            target=run_network_watchdog,
+            args=(net_cfg,),
+            daemon=True,
+            name="netwatch",
+        ).start()
+    except Exception as e:
+        print(f"⚠️  Failed to start network watchdog: {e}")
+
     display = Display()
     display.init()
     last_render = 0.0
@@ -83,8 +101,15 @@ def main():
                 if status is not None:
                     if is_current_step_finished():
                         opened_relay = status.get('opened_relay')
-                        if opened_relay is not None and opened_relay < 7:
-                            next_relay = opened_relay + 1
+                        raw_skipped = status.get("skipped_relays", []) or []
+                        skipped = set(
+                            x for x in raw_skipped
+                            if isinstance(x, int) and 0 <= x <= 7
+                        )
+                        next_relay = (opened_relay or 0) + 1
+                        while next_relay <= 7 and next_relay in skipped:
+                            next_relay += 1
+                        if opened_relay is not None and next_relay <= 7:
                             start_step(next_relay)
                         else:
                             log_current_relay_close()

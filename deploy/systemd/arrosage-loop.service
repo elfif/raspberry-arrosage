@@ -1,0 +1,20 @@
+[Unit]
+Description=Arrosage watering loop (relays + OLED + network watchdog)
+After=network-online.target redis-server.service NetworkManager.service
+Wants=network-online.target redis-server.service NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/jnfrm/projects/arrosage/arrosage-python
+ExecStartPre=-/usr/sbin/rfkill unblock wifi
+ExecStartPre=-/usr/sbin/iw reg set FR
+ExecStart=/home/jnfrm/venv/bin/python loop/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

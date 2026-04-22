@@ -29,6 +29,8 @@ BAND_60 = round(HEIGHT * 0.60)
 BODY_TOP = MODE_BAR_HEIGHT
 BODY_HEIGHT = HEIGHT - MODE_BAR_HEIGHT
 
+STATUS_ZONE_W = 18
+
 
 @dataclass
 class DisplayState:
@@ -38,6 +40,7 @@ class DisplayState:
     opened_relay: Optional[int] = None
     should_close_at: Optional[int] = None
     next_sequence: Optional[datetime] = None
+    wifi_ap_active: bool = False
 
 
 _MODE_LABELS = {
@@ -165,11 +168,42 @@ def _format_countdown(seconds_left: int) -> str:
     return f"{hours:02d}:{minutes:02d}"
 
 
-def _draw_mode_bar(draw: ImageDraw.ImageDraw, mode: Optional[str]) -> None:
-    label = _MODE_LABELS.get(mode or "", "?")
+def _draw_wifi_icon(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    size: int = 14,
+    fill: int = FILL_ON,
+) -> None:
+    """Draw a small Wi-Fi icon (three concentric arcs + a dot) at (x, y)."""
+    cx = x + size // 2
+    cy = y + size - 2
+    draw.arc([x, y, x + size, y + size], start=200, end=340, fill=fill)
+    draw.arc([x + 3, y + 3, x + size - 3, y + size - 3], start=200, end=340, fill=fill)
+    draw.arc([x + 6, y + 6, x + size - 6, y + size - 6], start=200, end=340, fill=fill)
+    draw.ellipse([cx - 1, cy - 1, cx + 1, cy + 1], fill=fill)
+
+
+def _draw_mode_bar(draw: ImageDraw.ImageDraw, state: DisplayState) -> None:
+    label = _MODE_LABELS.get(state.mode or "", "?")
     text = f"Mode: {label}"
-    font = _fit_font(draw, text, WIDTH - 4, MODE_BAR_HEIGHT - 2, start_size=18, min_size=10)
-    _draw_centered(draw, text, 0, MODE_BAR_HEIGHT, font)
+
+    text_max_w = WIDTH - 4 - STATUS_ZONE_W
+    font = _fit_font(draw, text, text_max_w, MODE_BAR_HEIGHT - 2, start_size=18, min_size=10)
+
+    tw, th = _text_size(draw, text, font)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_area_w = WIDTH - STATUS_ZONE_W
+    x = (text_area_w - tw) // 2 - bbox[0]
+    ty = (MODE_BAR_HEIGHT - th) // 2 - bbox[1]
+    draw.text((x, ty), text, font=font, fill=FILL_ON)
+
+    if state.wifi_ap_active:
+        icon_size = min(STATUS_ZONE_W - 2, MODE_BAR_HEIGHT - 4)
+        ix = WIDTH - STATUS_ZONE_W + (STATUS_ZONE_W - icon_size) // 2
+        iy = (MODE_BAR_HEIGHT - icon_size) // 2
+        _draw_wifi_icon(draw, ix, iy, size=icon_size)
+
     draw.line([(0, MODE_BAR_HEIGHT - 1), (WIDTH - 1, MODE_BAR_HEIGHT - 1)], fill=FILL_ON)
 
 
@@ -281,7 +315,7 @@ def render(state: DisplayState) -> Image.Image:
     image = Image.new("1", (WIDTH, HEIGHT), FILL_OFF)
     draw = ImageDraw.Draw(image)
 
-    _draw_mode_bar(draw, state.mode)
+    _draw_mode_bar(draw, state)
 
     mode = state.mode
     if mode == MODE_PAUSE:

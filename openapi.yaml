@@ -71,6 +71,9 @@ paths:
                       "POST /settings":
                         type: string
                         example: "Update settings"
+                      "DELETE /sequence/relay/{relay_id}":
+                        type: string
+                        example: "Remove a relay from the current sequence run"
                       "GET /history":
                         type: string
                         example: "Paginated list of relay activity history"
@@ -151,6 +154,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatusResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sequence/relay/{relay_id}:
+    delete:
+      summary: Remove relay from current sequence
+      description: >
+        Remove a relay from the currently running sequence. If the relay is
+        active, the sequence advances immediately to the next non-removed step.
+        If the relay is scheduled later, it is skipped when its turn would come.
+        Works while paused; resume then continues from the next surviving relay.
+      operationId: removeRelayFromSequence
+      tags:
+        - Sequence
+      parameters:
+        - name: relay_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 7
+          description: Relay index (0-7) to remove from the current run
+      responses:
+        '200':
+          description: Removal result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequenceRemoveRelayResponse'
+        '409':
+          description: No active sequence
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Invalid relay_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -599,6 +648,138 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /network/status:
+    get:
+      tags:
+        - Network
+      summary: Get current LAN/AP state
+      description: |
+        Returns the live state of Ethernet and Wi-Fi-STA (from a short
+        nmcli probe) combined with the watchdog's view of the AP
+        (``mode``, ``lan_last_ok_at``, ``ap_active_since``) read from
+        Redis.
+      operationId: getNetworkStatus
+      responses:
+        '200':
+          description: Current network state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkStatusResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/force:
+    post:
+      tags:
+        - Network
+      summary: Force the watchdog into 'ap' or 'auto'
+      description: |
+        Writes a one-shot intent consumed by the watchdog on its next
+        iteration. ``ap`` forces the AP up; ``auto`` releases the
+        override so the normal state machine resumes.
+      operationId: forceNetworkMode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkForceRequest'
+      responses:
+        '202':
+          description: Intent accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkForceResponse'
+        '400':
+          description: Invalid target
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/wifi:
+    get:
+      tags:
+        - Network
+      summary: Get the configured Wi-Fi client profile
+      description: Returns the SSID and security of the single WPA2-PSK client profile, or ``configured=false`` if none. The PSK is never returned.
+      operationId: getNetworkWifi
+      responses:
+        '200':
+          description: Current Wi-Fi client profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiProfileResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags:
+        - Network
+      summary: Create or replace the Wi-Fi client profile
+      description: |
+        Creates (or replaces) the single Wi-Fi client profile. Only
+        WPA2-PSK is supported; PSK length must be between 8 and 63
+        characters. Bumps ``network:wifi_changed`` so the watchdog can
+        bring the AP down for the new profile to associate.
+      operationId: putNetworkWifi
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WifiProfileRequest'
+      responses:
+        '200':
+          description: Profile saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiProfileResponse'
+        '400':
+          description: Validation error (unsupported security, bad PSK length, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Network
+      summary: Remove the Wi-Fi client profile
+      description: Idempotent; returns 204 even if no profile was configured.
+      operationId: deleteNetworkWifi
+      responses:
+        '204':
+          description: Profile removed (or was already absent)
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   schemas:
     ModeRequest:
@@ -636,6 +817,7 @@ components:
       required:
         - status
         - has_active_sequence
+        - skipped_relays
       properties:
         status:
           oneOf:
@@ -646,6 +828,52 @@ components:
           type: boolean
           description: Whether there is an active sequence running
           example: true
+        skipped_relays:
+          type: array
+          description: >
+            Relay indices skipped for the remainder of the current run
+            (same as status.skipped_relays when present); empty when idle
+          items:
+            type: integer
+            minimum: 0
+            maximum: 7
+          example: [0, 3]
+
+    SequenceRemoveRelayResponse:
+      type: object
+      required:
+        - success
+        - reason
+        - current_mode
+        - opened_relay
+        - skipped_relays
+      properties:
+        success:
+          type: boolean
+          example: true
+        reason:
+          type: string
+          description: >
+            Result code; ok, already_past, already_skipped, sequence_ended,
+            or invalid_relay_id when applicable
+          example: ok
+        current_mode:
+          type: string
+          nullable: true
+          enum: [manual, auto, semi_auto, pause]
+        opened_relay:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 7
+          description: Currently opened relay after the operation, if any
+        skipped_relays:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 7
+          example: [0, 3]
 
     SettingsRequest:
       type: object
@@ -727,6 +955,14 @@ components:
           type: integer
           description: Unix timestamp when relay should close (only present when the relay has a non-zero duration)
           example: 1758827445
+        skipped_relays:
+          type: array
+          description: Relay indices skipped for the remainder of this run
+          items:
+            type: integer
+            minimum: 0
+            maximum: 7
+          example: [2, 5]
 
     ActionResponse:
       type: object
@@ -967,11 +1203,158 @@ components:
             $ref: '#/components/schemas/RelayStat'
           description: Per-relay breakdown, always 8 entries (relay_id 0..7), zero-filled when inactive
 
+    InterfaceStatus:
+      type: object
+      required:
+        - up
+      properties:
+        up:
+          type: boolean
+          description: True when the interface has a non-link-local DHCP IPv4
+        ip:
+          type: string
+          nullable: true
+          example: "192.168.1.42"
+
+    WifiStaStatus:
+      type: object
+      required:
+        - configured
+        - up
+      properties:
+        configured:
+          type: boolean
+          description: Whether a Wi-Fi client profile is stored in NetworkManager
+        ssid:
+          type: string
+          nullable: true
+          example: "home-network"
+        security:
+          type: string
+          nullable: true
+          enum: [wpa2-psk]
+          example: "wpa2-psk"
+        up:
+          type: boolean
+          description: True when wlan0 is associated as a client (not AP) with a valid IPv4
+        ip:
+          type: string
+          nullable: true
+          example: "192.168.1.55"
+
+    ApStatus:
+      type: object
+      required:
+        - active
+      properties:
+        active:
+          type: boolean
+          description: True when the AP profile is currently up
+        ssid:
+          type: string
+          nullable: true
+          example: "arrosage-setup"
+        since:
+          type: integer
+          nullable: true
+          description: Unix seconds when the AP was last brought up
+          example: 1774994400
+
+    NetworkStatusResponse:
+      type: object
+      required:
+        - mode
+        - ethernet
+        - wifi_sta
+        - ap
+      properties:
+        mode:
+          type: string
+          nullable: true
+          enum: [ethernet, wifi_sta, ap, checking]
+          example: "ethernet"
+        lan_last_ok_at:
+          type: integer
+          nullable: true
+          description: Unix seconds of the last successful LAN observation
+          example: 1774994400
+        ethernet:
+          $ref: '#/components/schemas/InterfaceStatus'
+        wifi_sta:
+          $ref: '#/components/schemas/WifiStaStatus'
+        ap:
+          $ref: '#/components/schemas/ApStatus'
+
+    NetworkForceRequest:
+      type: object
+      required:
+        - target
+      properties:
+        target:
+          type: string
+          enum: [ap, auto]
+          description: Target state; ``auto`` releases any previous ``ap`` override
+          example: "ap"
+
+    NetworkForceResponse:
+      type: object
+      required:
+        - accepted
+      properties:
+        accepted:
+          type: boolean
+        target:
+          type: string
+          nullable: true
+          enum: [ap, auto]
+          example: "ap"
+
+    WifiProfileResponse:
+      type: object
+      required:
+        - configured
+      properties:
+        configured:
+          type: boolean
+        ssid:
+          type: string
+          nullable: true
+          example: "home-network"
+        security:
+          type: string
+          nullable: true
+          enum: [wpa2-psk]
+          example: "wpa2-psk"
+
+    WifiProfileRequest:
+      type: object
+      required:
+        - ssid
+        - psk
+      properties:
+        ssid:
+          type: string
+          minLength: 1
+          maxLength: 32
+          example: "home-network"
+        security:
+          type: string
+          enum: [wpa2-psk]
+          default: "wpa2-psk"
+          example: "wpa2-psk"
+        psk:
+          type: string
+          minLength: 8
+          maxLength: 63
+          example: "correct-horse-battery-staple"
+
 tags:
   - name: Mode
     description: System mode management
   - name: Status
     description: Sequence status information
+  - name: Sequence
+    description: Running sequence edits (skip relay while active)
   - name: Control
     description: System control actions (pause, resume, reset, start)
   - name: Relay
@@ -980,3 +1363,5 @@ tags:
     description: System settings (start time, sequence durations, weekly schedule)
   - name: History
     description: Relay activity history (list + aggregate stats for dashboards)
+  - name: Network
+    description: LAN connectivity status, Wi-Fi client profile, and AP fallback
