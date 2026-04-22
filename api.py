@@ -30,11 +30,17 @@ logger = logging.getLogger("arrosage_api")
 from data.mode import get_mode, set_mode, VALID_MODES, MODE_SEMI_AUTO, MODE_MANUAL
 from data.status import get_status
 from data.history import init_history_db, list_history, get_stats
+from network import connectivity as network_connectivity
+from network import sta as network_sta
+from network import state as network_state
+from network.config import load_config as load_network_config
+from network.sta import WifiProfileError
 try:
     from commands.pause import pause
     from commands.resume import resume
     from commands.reset import reset
     from commands.start import start
+    from commands.remove_relay import remove_relay
     from commands.relay import (
         open_relay_manual,
         close_relays_manual,
@@ -133,6 +139,14 @@ class ModeRequest(BaseModel):
 class StatusResponse(BaseModel):
     status: dict | None
     has_active_sequence: bool
+    skipped_relays: list[int] = []
+
+class SequenceRemoveRelayResponse(BaseModel):
+    success: bool
+    reason: str
+    current_mode: str | None
+    opened_relay: int | None
+    skipped_relays: list[int]
 
 class ActionResponse(BaseModel):
     success: bool
@@ -186,6 +200,54 @@ class HistoryStatsResponse(BaseModel):
     total_count: int
     per_relay: list[RelayStat]
 
+
+class InterfaceStatus(BaseModel):
+    up: bool
+    ip: str | None = None
+
+
+class WifiStaStatus(BaseModel):
+    configured: bool
+    ssid: str | None = None
+    security: str | None = None
+    up: bool
+    ip: str | None = None
+
+
+class ApStatus(BaseModel):
+    active: bool
+    ssid: str | None = None
+    since: int | None = None
+
+
+class NetworkStatusResponse(BaseModel):
+    mode: str | None
+    lan_last_ok_at: int | None
+    ethernet: InterfaceStatus
+    wifi_sta: WifiStaStatus
+    ap: ApStatus
+
+
+class NetworkForceRequest(BaseModel):
+    target: str
+
+
+class NetworkForceResponse(BaseModel):
+    accepted: bool
+    target: str | None
+
+
+class WifiProfileResponse(BaseModel):
+    configured: bool
+    ssid: str | None = None
+    security: str | None = None
+
+
+class WifiProfileRequest(BaseModel):
+    ssid: str
+    security: str = network_sta.SECURITY_WPA2_PSK
+    psk: str
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
@@ -205,8 +267,14 @@ async def root():
             "GET /relays": "Get current per-relay status",
             "GET /settings": "Get current settings",
             "POST /settings": "Update settings",
+            "DELETE /sequence/relay/{relay_id}": "Remove a relay from the current sequence run",
             "GET /history": "Paginated list of relay activity history",
-            "GET /history/stats": "Aggregate history stats for a month or year"
+            "GET /history/stats": "Aggregate history stats for a month or year",
+            "GET /network/status": "Get LAN/AP network state",
+            "POST /network/force": "Force watchdog to 'ap' or 'auto'",
+            "GET /network/wifi": "Get configured Wi-Fi client profile (no PSK)",
+            "PUT /network/wifi": "Create/replace Wi-Fi client profile (WPA2-PSK)",
+            "DELETE /network/wifi": "Remove Wi-Fi client profile"
         }
     }
 
@@ -274,12 +342,63 @@ async def get_current_status():
     try:
         status = get_status()
         has_active_sequence = status is not None
-        
+        skipped_relays: list[int] = []
+        if status:
+            raw = status.get("skipped_relays") or []
+            if isinstance(raw, list):
+                skipped_relays = sorted(
+                    {x for x in raw if isinstance(x, int) and 0 <= x <= 7}
+                )
+
         return StatusResponse(
             status=status,
-            has_active_sequence=has_active_sequence
+            has_active_sequence=has_active_sequence,
+            skipped_relays=skipped_relays,
         )
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.delete("/sequence/relay/{relay_id}", response_model=SequenceRemoveRelayResponse)
+async def remove_relay_from_sequence(relay_id: int):
+    """Remove a relay from the currently running sequence (active or future step)."""
+    try:
+        if relay_id < 0 or relay_id > 7:
+            raise HTTPException(
+                status_code=422,
+                detail=f"relay_id must be 0..7, got {relay_id}",
+            )
+
+        ok, reason = remove_relay(relay_id)
+        if reason == "no_active_sequence":
+            raise HTTPException(
+                status_code=409,
+                detail="No active sequence to remove a relay from",
+            )
+
+        status = get_status() or {}
+        raw_skipped = status.get("skipped_relays") or []
+        skipped: list[int] = []
+        if isinstance(raw_skipped, list):
+            skipped = sorted(
+                {x for x in raw_skipped if isinstance(x, int) and 0 <= x <= 7}
+            )
+
+        opened = status.get("opened_relay")
+        opened_relay = opened if isinstance(opened, int) and 0 <= opened <= 7 else None
+
+        return SequenceRemoveRelayResponse(
+            success=ok,
+            reason=reason,
+            current_mode=get_mode(),
+            opened_relay=opened_relay,
+            skipped_relays=skipped,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in DELETE /sequence/relay/{{id}}: {e}")
+        logger.error(tb.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/pause", response_model=ActionResponse)
@@ -727,6 +846,158 @@ async def get_history_stats(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@app.get("/network/status", response_model=NetworkStatusResponse, tags=["network"])
+async def get_network_status():
+    """
+    Return the current LAN/AP state.
+
+    ``ethernet`` and ``wifi_sta`` come from a live nmcli probe (1–3s total
+    worst case). ``ap`` and ``mode`` come from Redis, which is written by
+    the watchdog thread.
+    """
+    try:
+        cfg = load_network_config()
+        live = network_connectivity.lan_status(cfg.lan_iface, cfg.ap_iface)
+        snap = network_state.snapshot()
+        sta_profile = network_sta.get()
+
+        ethernet = InterfaceStatus(**live.get("ethernet", {"up": False, "ip": None}))
+        wifi_live = live.get("wifi_sta", {"up": False, "ip": None})
+        wifi_sta = WifiStaStatus(
+            configured=sta_profile is not None,
+            ssid=sta_profile["ssid"] if sta_profile else None,
+            security=sta_profile["security"] if sta_profile else None,
+            up=bool(wifi_live.get("up")),
+            ip=wifi_live.get("ip"),
+        )
+        ap = ApStatus(
+            active=snap["mode"] == network_state.MODE_AP,
+            ssid=snap["ap_ssid"] or cfg.ap_ssid,
+            since=snap["ap_active_since"],
+        )
+
+        return NetworkStatusResponse(
+            mode=snap["mode"],
+            lan_last_ok_at=snap["lan_last_ok_at"],
+            ethernet=ethernet,
+            wifi_sta=wifi_sta,
+            ap=ap,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in GET /network/status: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post(
+    "/network/force",
+    response_model=NetworkForceResponse,
+    status_code=202,
+    tags=["network"],
+)
+async def force_network_mode(request: NetworkForceRequest):
+    """
+    Ask the watchdog to transition to ``"ap"`` or ``"auto"``.
+
+    The watchdog consumes the intent on its next iteration. ``"auto"``
+    does not force Ethernet/Wi-Fi-STA specifically; it just clears any
+    earlier ``"ap"`` override so the normal state machine takes over.
+    """
+    try:
+        target = (request.target or "").strip().lower()
+        if target not in network_state.VALID_FORCE_TARGETS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid target '{request.target}'. "
+                    f"Valid targets: {list(network_state.VALID_FORCE_TARGETS)}"
+                ),
+            )
+
+        if not network_state.set_force(target):
+            raise HTTPException(status_code=500, detail="Failed to write intent to Redis")
+
+        logger.info(f"Network force target set to: {target}")
+        return NetworkForceResponse(accepted=True, target=target)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in POST /network/force: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.get("/network/wifi", response_model=WifiProfileResponse, tags=["network"])
+async def get_network_wifi():
+    """Return the currently configured Wi-Fi client profile (no PSK)."""
+    try:
+        profile = network_sta.get()
+        if profile is None:
+            return WifiProfileResponse(configured=False)
+        return WifiProfileResponse(
+            configured=True,
+            ssid=profile["ssid"],
+            security=profile["security"],
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in GET /network/wifi: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.put("/network/wifi", response_model=WifiProfileResponse, tags=["network"])
+async def put_network_wifi(request: WifiProfileRequest):
+    """
+    Create or replace the Wi-Fi client profile.
+
+    Only WPA2-PSK is accepted; PSK length must be 8..63 characters. On
+    success, the watchdog is nudged so that if the AP is currently up it
+    is brought down to let the new STA profile associate.
+    """
+    try:
+        cfg = load_network_config()
+        security = (request.security or "").strip().lower()
+        logger.info(f"PUT /network/wifi ssid={request.ssid!r} security={security!r}")
+
+        try:
+            snapshot = network_sta.set(
+                ssid=request.ssid,
+                psk=request.psk,
+                security=security,
+                iface=cfg.ap_iface,
+            )
+        except WifiProfileError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return WifiProfileResponse(
+            configured=True,
+            ssid=snapshot["ssid"],
+            security=snapshot["security"],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in PUT /network/wifi: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.delete("/network/wifi", status_code=204, tags=["network"])
+async def delete_network_wifi():
+    """Remove the Wi-Fi client profile. Idempotent."""
+    try:
+        ok = network_sta.delete()
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to delete Wi-Fi profile")
+        return Response(status_code=204)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in DELETE /network/wifi: {e}")
+        logger.error(tb.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("🚀 Starting Arrosage API...")
@@ -744,8 +1015,14 @@ if __name__ == "__main__":
     logger.info("   GET  /relays - Get current per-relay status")
     logger.info("   GET  /settings - Get current settings")
     logger.info("   POST /settings - Update settings")
+    logger.info("   DELETE /sequence/relay/{relay_id} - Remove relay from current sequence")
     logger.info("   GET  /history - Paginated relay activity history")
     logger.info("   GET  /history/stats - Aggregate history stats (month|year)")
+    logger.info("   GET  /network/status - LAN/AP network state")
+    logger.info("   POST /network/force - Force watchdog ('ap' or 'auto')")
+    logger.info("   GET  /network/wifi - Configured Wi-Fi client profile")
+    logger.info("   PUT  /network/wifi - Create/replace Wi-Fi client profile")
+    logger.info("   DELETE /network/wifi - Remove Wi-Fi client profile")
     logger.info("💡 Example usage:")
     logger.info("   curl http://localhost:8000/mode")
     logger.info("   curl http://localhost:8000/status")

@@ -185,3 +185,252 @@ sqlite3 data/history.db 'SELECT * FROM relay_activity ORDER BY id DESC LIMIT 10;
 Period boundaries (`start_at` / `end_at`) for `/history/stats` are
 computed in the Pi's local timezone, so "April" means the whole local
 calendar month.
+
+## Network management
+
+The backend prefers **Ethernet** as the LAN uplink, accepts a
+user-configured **Wi-Fi client** profile via the HTTP API, and falls
+back to a WPA2 **Wi-Fi AP** on `wlan0` when neither works. A daemon
+thread inside `loop/main.py` polls NetworkManager every
+`POLL_INTERVAL_S` and toggles the AP profile with hysteresis.
+
+### Environment file
+
+Runtime settings (AP SSID/PSK/channel, interfaces, thresholds) live in
+a single root-readable env file. The easiest way to create it is the
+bundled helper, which generates a random 24-char AP PSK and prints it
+once:
+
+```bash
+sudo ./init-network-env.sh
+```
+
+Any value can be overridden via the environment, e.g.:
+
+```bash
+sudo AP_SSID=arrosage-field AP_CHANNEL=11 ./init-network-env.sh
+```
+
+The script refuses to overwrite an existing file; pass `FORCE=1` to
+replace it (the current PSK will be lost). If you prefer to write the
+file by hand:
+
+```bash
+sudo install -d -m 0755 /etc/arrosage
+sudo tee /etc/arrosage/network.env > /dev/null <<'EOF'
+# Wi-Fi AP fallback (WPA2-PSK). Used ONLY when no LAN is reachable.
+AP_SSID=arrosage-setup
+AP_PSK=change-me-strong-password
+AP_CHANNEL=6
+AP_IFACE=wlan0
+
+# Wired LAN interface to check first.
+LAN_IFACE=eth0
+
+# Watchdog tuning.
+POLL_INTERVAL_S=10
+FAIL_THRESHOLD=3
+SUCCESS_THRESHOLD=3
+BOOT_GRACE_S=20
+STA_CONNECT_GRACE_S=30
+EOF
+sudo chmod 600 /etc/arrosage/network.env
+sudo chown root:root /etc/arrosage/network.env
+```
+
+The PSK must be **8..63 characters**; shorter values make
+`network.ap.ensure_profile` refuse to provision the AP (so it is never
+broadcast open by accident).
+
+For development the path can be overridden without touching `/etc`:
+
+```bash
+ARROSAGE_NETWORK_ENV=$PWD/dev.network.env python loop/main.py
+```
+
+### Redis keys used
+
+The watchdog is the sole writer of `network:mode`,
+`network:lan_last_ok_at`, `network:ap_active_since` and
+`network:ap_ssid`. The HTTP API writes `network:force` and
+`network:wifi_changed` as one-shot intents the watchdog consumes.
+
+### One-time host provisioning
+
+The backend relies on NetworkManager (default on Raspberry Pi OS
+Bookworm) and creates the AP profile itself on first boot, but the host
+still needs a handful of one-off steps.
+
+1. **Enable the radio.** Fresh images often leave Wi-Fi rfkill-blocked:
+
+   ```bash
+   sudo rfkill unblock wifi
+   ```
+
+2. **Set the regulatory domain** before the AP is activated for the
+   first time, otherwise NetworkManager may refuse some channels or
+   power levels:
+
+   ```bash
+   sudo iw reg set FR   # or your 2-letter country code
+   ```
+
+3. **Grant permission to manage NetworkManager.** The watering loop and
+   the API both call `nmcli connection add/modify/delete/up/down`. The
+   simplest option, matching the current `start.sh`, is to run them as
+   root via systemd. If you prefer a non-root user, install a polkit
+   rule like:
+
+   ```javascript
+   // /etc/polkit-1/rules.d/50-arrosage.rules
+   polkit.addRule(function(action, subject) {
+       if (subject.user === "arrosage" && (
+           action.id === "org.freedesktop.NetworkManager.network-control" ||
+           action.id === "org.freedesktop.NetworkManager.settings.modify.system"
+       )) {
+           return polkit.Result.YES;
+       }
+   });
+   ```
+
+4. **(Optional) Pre-create the AP profile.** The watchdog runs
+   `ap.ensure_profile()` on startup, but you can provision it manually
+   for testing:
+
+   ```bash
+   sudo nmcli connection add \
+     type wifi ifname wlan0 con-name arrosage-ap \
+     autoconnect no ssid "arrosage-setup" mode ap \
+     802-11-wireless.band bg 802-11-wireless.channel 6 \
+     802-11-wireless-security.key-mgmt wpa-psk \
+     802-11-wireless-security.proto rsn \
+     802-11-wireless-security.pairwise ccmp \
+     802-11-wireless-security.group ccmp \
+     802-11-wireless-security.psk "your-ap-password" \
+     ipv4.method shared ipv6.method ignore
+   ```
+
+### Configuring a Wi-Fi client profile at runtime
+
+Once the Pi is reachable (over Ethernet, or over the fallback AP), the
+client profile is created via the HTTP API:
+
+```bash
+curl -X PUT http://<host>:8000/network/wifi \
+     -H 'Content-Type: application/json' \
+     -d '{"ssid": "home-network", "security": "wpa2-psk", "psk": "correct-horse-battery-staple"}'
+```
+
+Other useful calls:
+
+```bash
+curl http://<host>:8000/network/status
+curl http://<host>:8000/network/wifi
+curl -X DELETE http://<host>:8000/network/wifi
+curl -X POST http://<host>:8000/network/force \
+     -H 'Content-Type: application/json' \
+     -d '{"target": "ap"}'     # or "auto"
+```
+
+### Security caveat
+
+`api.py` currently has no authentication. The `PUT /network/wifi`
+endpoint accepts the PSK in plaintext over HTTP, and
+`POST /network/force` can flip the Pi into AP mode. Before exposing the
+API beyond a trusted LAN, bind the management endpoints to the AP
+subnet only (e.g. via nftables on `wlan0`) or add an authentication
+layer.
+
+## Running as a service
+
+In production, the Pi runs three `systemd` units instead of
+`start.sh` (which is kept as a dev-only convenience):
+
+- `arrosage-loop.service` — watering loop, OLED renderer, and network
+  watchdog. Runs as `root` (needs GPIO, I²C, and `nmcli` to reconfigure
+  NetworkManager).
+- `arrosage-api.service` — FastAPI backend on port 8000. Runs as
+  `root` because some endpoints (e.g. `PUT /network/wifi`) drive
+  `nmcli` too.
+- `arrosage-web.service` — the built Vite bundle served by
+  `vite preview` on port 5173. Runs as `jnfrm` (matches `node_modules`
+  ownership, no root).
+
+Unit files live in the repo under
+[`deploy/systemd/`](deploy/systemd/) and the installer at
+[`deploy/install-services.sh`](deploy/install-services.sh) copies them
+to `/etc/systemd/system/`, runs `daemon-reload`, and enables them.
+
+### Prerequisites (once)
+
+1. Redis and NetworkManager enabled at boot:
+   ```bash
+   sudo systemctl enable --now redis-server.service NetworkManager.service
+   ```
+2. Python venv at `/home/jnfrm/venv` with `requirements.txt` installed.
+3. Network env file provisioned:
+   ```bash
+   sudo ./init-network-env.sh
+   ```
+4. Web bundle built once:
+   ```bash
+   cd ../arrosage-web && npm ci && npm run build
+   ```
+5. Regulatory country: the loop unit runs `iw reg set FR` on start.
+   Edit `deploy/systemd/arrosage-loop.service` (and reinstall) if you
+   deploy outside France.
+
+### Install
+
+```bash
+sudo ./deploy/install-services.sh
+```
+
+The script refuses to run if any prerequisite is missing (venv python,
+node binary, `arrosage-web/dist/`, `/etc/arrosage/network.env`, …) and
+prints a clear reason. It is idempotent — re-running it overwrites the
+installed units with whatever is currently in the repo.
+
+### Check
+
+```bash
+systemctl status arrosage-loop arrosage-api arrosage-web
+journalctl -u arrosage-loop -f
+journalctl -u arrosage-api  -f
+journalctl -u arrosage-web  -f
+```
+
+### Update flow
+
+Python code changed:
+
+```bash
+git pull
+sudo systemctl restart arrosage-loop arrosage-api
+```
+
+Web UI changed:
+
+```bash
+git pull
+cd ../arrosage-web && npm run build
+sudo systemctl restart arrosage-web
+```
+
+Unit files changed (anything under `deploy/systemd/`):
+
+```bash
+sudo ./deploy/install-services.sh
+```
+
+### nvm caveat
+
+`arrosage-web.service` hardcodes the Node binary path
+(`/home/jnfrm/.nvm/versions/node/v22.20.0/bin/node`) because `systemd`
+does not source `nvm`. If you upgrade Node via
+`nvm install <version>`, update the `ExecStart=` line in
+[`deploy/systemd/arrosage-web.service`](deploy/systemd/arrosage-web.service)
+to the new path, then re-run `sudo ./deploy/install-services.sh`.
+`journalctl -u arrosage-web` will show an `ENOENT` on the old path if
+you forget.
+

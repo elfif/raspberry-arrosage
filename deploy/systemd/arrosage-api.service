@@ -1,0 +1,19 @@
+[Unit]
+Description=Arrosage HTTP API (FastAPI / uvicorn)
+After=network-online.target redis-server.service arrosage-loop.service
+Wants=network-online.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/jnfrm/projects/arrosage/arrosage-python
+ExecStart=/home/jnfrm/venv/bin/python api.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

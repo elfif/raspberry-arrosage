@@ -45,15 +45,30 @@ def set_open_relay(relay_number: int, duration: int = 0) -> bool:
         return False
     
     try:
+        now = int(time.time())
+        # Preserve skipped_relays across step transitions (remove-relay feature)
+        existing = get_json_from_redis("status")
+        skipped: list[int] = []
+        if isinstance(existing, dict):
+            raw = existing.get("skipped_relays")
+            if isinstance(raw, list):
+                for x in raw:
+                    if isinstance(x, int) and 0 <= x <= 7:
+                        skipped.append(x)
+                skipped = sorted(set(skipped))
+
         # Create status data with current timestamp
-        status_data = {
+        status_data: Dict[str, Any] = {
             "opened_relay": relay_number,
-            "opened_at": int(time.time())
+            "opened_at": now,
         }
 
         if duration > 0:
-            status_data["should_close_at"] = int(time.time()) + duration
-        
+            status_data["should_close_at"] = now + duration
+
+        if skipped:
+            status_data["skipped_relays"] = skipped
+
         # Store in Redis using centralized function
         success = set_json_to_redis('status', status_data)
         if not success:
@@ -66,6 +81,54 @@ def set_open_relay(relay_number: int, duration: int = 0) -> bool:
     except Exception as e:
         print(f"❌ Unexpected error setting relay status: {e}")
         return False
+
+
+def add_skipped_relay(relay_id: int) -> bool:
+    """
+    Append relay_id to status.skipped_relays (dedup). No-op / False if no active sequence.
+
+    Args:
+        relay_id: Relay index 0..7 to skip for the remainder of the current run.
+
+    Returns:
+        True if status was updated (or relay was already skipped), False on error / no status.
+    """
+    if not isinstance(relay_id, int) or relay_id < 0 or relay_id > 7:
+        print(f"❌ Invalid relay id for skip: {relay_id}")
+        return False
+
+    try:
+        status = get_json_from_redis("status")
+        if not isinstance(status, dict):
+            print("❌ add_skipped_relay: no active status in Redis")
+            return False
+
+        opened = status.get("opened_relay")
+        if not isinstance(opened, int) or opened < 0 or opened > 7:
+            print("❌ add_skipped_relay: status missing valid opened_relay")
+            return False
+
+        raw = status.get("skipped_relays")
+        skipped_set: set[int] = set()
+        if isinstance(raw, list):
+            for x in raw:
+                if isinstance(x, int) and 0 <= x <= 7:
+                    skipped_set.add(x)
+
+        skipped_set.add(relay_id)
+        status["skipped_relays"] = sorted(skipped_set)
+
+        if not set_json_to_redis("status", status):
+            print("❌ add_skipped_relay: failed to write status")
+            return False
+
+        print(f"✅ skipped_relays updated: {status['skipped_relays']}")
+        return True
+
+    except Exception as e:
+        print(f"❌ Unexpected error in add_skipped_relay: {e}")
+        return False
+
 
 def get_status() -> Optional[Dict[str, Any]]:
     """
