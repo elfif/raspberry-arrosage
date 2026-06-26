@@ -1,0 +1,33 @@
+{
+	admin off
+	auto_https off
+}
+
+# Cloudflare (Flexible) and LAN both hit this Pi on :80 (DMZ / local).
+# Same-origin SPA + /api/* proxied to uvicorn (prefix stripped).
+:80 {
+	# HTTP Basic Auth (user fixed here; bcrypt hash from systemd EnvironmentFile).
+	basicauth /* {
+		arrosage {$ARROSAGE_BASIC_AUTH_HASH}
+	}
+
+	encode zstd gzip
+
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	handle {
+		root * /home/jnfrm/projects/arrosage/arrosage-web/dist
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Log to stderr so systemd captures it (journalctl -u caddy).
+	# Avoids /var/log/caddy permission clashes when the unit runs as jnfrm
+	# but the distro package created that directory as root.
+	log {
+		output stderr
+		format console
+	}
+}

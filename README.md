@@ -343,23 +343,29 @@ layer.
 
 ## Running as a service
 
-In production, the Pi runs three `systemd` units instead of
-`start.sh` (which is kept as a dev-only convenience):
+In production, the Pi runs two `systemd` units for the app plus **Caddy**
+on port 80 (instead of `start.sh`, which is kept as a dev-only convenience):
 
 - `arrosage-loop.service` — watering loop, OLED renderer, and network
   watchdog. Runs as `root` (needs GPIO, I²C, and `nmcli` to reconfigure
   NetworkManager).
-- `arrosage-api.service` — FastAPI backend on port 8000. Runs as
-  `root` because some endpoints (e.g. `PUT /network/wifi`) drive
-  `nmcli` too.
-- `arrosage-web.service` — the built Vite bundle served by
-  `vite preview` on port 5173. Runs as `jnfrm` (matches `node_modules`
-  ownership, no root).
+- `arrosage-api.service` — FastAPI backend on **127.0.0.1:8000** (not
+  exposed on the LAN). Runs as `root` because some endpoints (e.g.
+  `PUT /network/wifi`) drive `nmcli` too.
+- **Caddy** (`caddy.service`) — serves the built SPA from
+  `arrosage-web/dist` and reverse-proxies `/api/*` to the API (prefix
+  stripped). Install with
+  [`deploy/install-caddy.sh`](deploy/install-caddy.sh). The frontend
+  bundle uses `VITE_API_BASE_URL=/api` so the browser talks same-origin
+  to Caddy (LAN, Cloudflare, or `localhost` during dev with a matching
+  proxy).
 
 Unit files live in the repo under
 [`deploy/systemd/`](deploy/systemd/) and the installer at
 [`deploy/install-services.sh`](deploy/install-services.sh) copies them
 to `/etc/systemd/system/`, runs `daemon-reload`, and enables them.
+Re-running `install-services.sh` disables and removes any legacy
+`arrosage-web.service` (old `vite preview` on :5173).
 
 ### Prerequisites (once)
 
@@ -387,17 +393,17 @@ sudo ./deploy/install-services.sh
 ```
 
 The script refuses to run if any prerequisite is missing (venv python,
-node binary, `arrosage-web/dist/`, `/etc/arrosage/network.env`, …) and
-prints a clear reason. It is idempotent — re-running it overwrites the
-installed units with whatever is currently in the repo.
+`arrosage-web/dist/`, `/etc/arrosage/network.env`, …) and prints a clear
+reason. It is idempotent — re-running it overwrites the installed units
+with whatever is currently in the repo.
 
 ### Check
 
 ```bash
-systemctl status arrosage-loop arrosage-api arrosage-web
+systemctl status arrosage-loop arrosage-api caddy
 journalctl -u arrosage-loop -f
 journalctl -u arrosage-api  -f
-journalctl -u arrosage-web  -f
+journalctl -u caddy -f
 ```
 
 ### Update flow
@@ -414,7 +420,7 @@ Web UI changed:
 ```bash
 git pull
 cd ../arrosage-web && npm run build
-sudo systemctl restart arrosage-web
+sudo systemctl restart caddy
 ```
 
 Unit files changed (anything under `deploy/systemd/`):
@@ -423,14 +429,59 @@ Unit files changed (anything under `deploy/systemd/`):
 sudo ./deploy/install-services.sh
 ```
 
-### nvm caveat
+### Caddy and first-time reverse proxy
 
-`arrosage-web.service` hardcodes the Node binary path
-(`/home/jnfrm/.nvm/versions/node/v22.20.0/bin/node`) because `systemd`
-does not source `nvm`. If you upgrade Node via
-`nvm install <version>`, update the `ExecStart=` line in
-[`deploy/systemd/arrosage-web.service`](deploy/systemd/arrosage-web.service)
-to the new path, then re-run `sudo ./deploy/install-services.sh`.
-`journalctl -u arrosage-web` will show an `ENOENT` on the old path if
-you forget.
+After building the web app, run:
+
+```bash
+sudo ./deploy/install-caddy.sh
+```
+
+Then `sudo ./deploy/install-services.sh` as usual. To refresh Caddy
+config only: `sudo ./deploy/install-caddy.sh` again (overwrites
+`/etc/caddy/Caddyfile` and the systemd drop-in).
+
+### Caddy HTTP Basic Auth
+
+The Caddyfile protects **all** of `:80` (static UI and `/api`) with a
+single user **`arrosage`**. The password is **never** stored in git;
+only a **bcrypt hash** lives on the Pi in
+`/etc/arrosage/caddy-basic-auth.env`.
+
+1. On the Pi, generate a hash (interactive is best so the password is
+   not left in shell history):
+
+   ```bash
+   caddy hash-password
+   ```
+
+2. Create `/etc/arrosage/caddy-basic-auth.env` with one line (use the
+   full string `caddy` printed). Bcrypt values start with `$2a$` / `$2y$`;
+   **systemd** reads this file without shell expansion, so those `$`
+   characters are fine. (Do not `source` the file in bash with `set -u`.)
+
+   ```bash
+   ARROSAGE_BASIC_AUTH_HASH=$2a$14$...
+   ```
+
+3. Caddy runs as `jnfrm`; the file must be readable by that user, e.g.:
+
+   ```bash
+   sudo chown root:jnfrm /etc/arrosage/caddy-basic-auth.env
+   sudo chmod 640 /etc/arrosage/caddy-basic-auth.env
+   ```
+
+4. Deploy / reload:
+
+   ```bash
+   sudo ./deploy/install-caddy.sh
+   ```
+
+See [`deploy/caddy/caddy-basic-auth.env.example`](deploy/caddy/caddy-basic-auth.env.example)
+for a commented template. `install-caddy.sh` refuses to run if the env
+file is missing, the hash is not a plausible bcrypt string, or `jnfrm`
+cannot read the file.
+
+After changing the password, regenerate the hash, update the env file,
+and run `sudo systemctl restart caddy`.
 

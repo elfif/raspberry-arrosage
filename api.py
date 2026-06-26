@@ -60,15 +60,31 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS to allow requests from the frontend
+# Configure CORS to allow requests from the frontend.
+#
+# We use a regex instead of a fixed list because Starlette's CORSMiddleware
+# does exact string matching on the Origin header, and real-world LAN
+# browsers send variants that silently break an exact list:
+#   - mDNS clients sometimes canonicalize to a trailing dot:
+#       Origin: http://arrosage-pi.local.:5173
+#   - Different devices reach the Pi via different LAN IPs (DHCP changes,
+#       multiple interfaces), so hardcoding a single 192.168.x.y breaks.
+#   - Dev servers and the built preview run on different ports.
+#
+# The regex below covers localhost, any private LAN IP (RFC1918), and the
+# arrosage-pi.local hostname with or without a trailing dot, on any port.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server (localhost)
-        "http://127.0.0.1:5173",  # Vite dev server (127.0.0.1)
-        "http://192.168.1.46:5173",  # Vite dev server (LAN IP)
-        # Add production origins here when deploying
-    ],
+    allow_origin_regex=(
+        r"^http://("
+        r"localhost"
+        r"|127\.0\.0\.1"
+        r"|arrosage-pi\.local\.?"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+        r")(:\d+)?$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allow all headers
@@ -1034,4 +1050,4 @@ if __name__ == "__main__":
     logger.info("   curl -X POST http://localhost:8000/mode -H 'Content-Type: application/json' -d '{\"mode\": \"auto\"}'")
     logger.info("   curl -X POST http://localhost:8000/settings -H 'Content-Type: application/json' -d '{\"start_at\": \"20:00\", \"sequence\": [3600,3600,3600,3600,3600,3600,3600,0], \"schedule\": [false,false,false,false,false,false,true]}'")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

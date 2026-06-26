@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the three arrosage systemd units into /etc/systemd/system/,
+# Install the arrosage systemd units into /etc/systemd/system/,
 # reload systemd, and enable them to start on boot.
 #
 # Run with sudo:
@@ -11,6 +11,9 @@
 # This script is idempotent: re-running it overwrites the installed unit
 # files with the ones from the repo, reloads systemd, and re-enables the
 # services.
+#
+# The web UI is served by Caddy (see deploy/install-caddy.sh), not a
+# separate Node preview service.
 
 # Some invocations (e.g. `sudo sh install-services.sh`) ignore the shebang
 # and run us under dash, which does not support `set -o pipefail` or
@@ -37,16 +40,24 @@ WEB_ROOT="${REPO_ROOT}/arrosage-web"
 UNITS=(
     "arrosage-loop.service"
     "arrosage-api.service"
-    "arrosage-web.service"
 )
 
 VENV_PY="/home/jnfrm/venv/bin/python"
-NODE_BIN="/home/jnfrm/.nvm/versions/node/v22.20.0/bin/node"
 
 fail() {
     echo "ERROR: $*" >&2
     exit 1
 }
+
+# --- Retire legacy vite preview unit (replaced by Caddy) ----------------
+
+LEGACY_WEB_UNIT="arrosage-web.service"
+if systemctl cat "${LEGACY_WEB_UNIT}" &>/dev/null \
+    || [[ -f "${UNIT_DST_DIR}/${LEGACY_WEB_UNIT}" ]]; then
+    echo "==> Disabling legacy ${LEGACY_WEB_UNIT} (replaced by Caddy)..."
+    systemctl disable --now "${LEGACY_WEB_UNIT}" 2>/dev/null || true
+fi
+rm -f "${UNIT_DST_DIR}/${LEGACY_WEB_UNIT}"
 
 # --- Prerequisite checks ------------------------------------------------
 
@@ -65,10 +76,6 @@ done
     || fail "missing ${WEB_ROOT}/dist (run 'cd arrosage-web && npm ci && npm run build' first)"
 [[ -x "$VENV_PY" ]] \
     || fail "missing or non-executable venv python: ${VENV_PY}"
-[[ -x "$NODE_BIN" ]] \
-    || fail "missing or non-executable node: ${NODE_BIN} (update arrosage-web.service after nvm upgrades)"
-[[ -f "${WEB_ROOT}/node_modules/vite/bin/vite.js" ]] \
-    || fail "missing vite: run 'cd arrosage-web && npm ci'"
 [[ -f "/etc/arrosage/network.env" ]] \
     || fail "missing /etc/arrosage/network.env (run 'sudo ./init-network-env.sh' first)"
 
@@ -109,4 +116,4 @@ done
 echo "Done. Useful follow-ups:"
 echo "    journalctl -u arrosage-loop -f"
 echo "    journalctl -u arrosage-api  -f"
-echo "    journalctl -u arrosage-web  -f"
+echo "    journalctl -u caddy         -f"
