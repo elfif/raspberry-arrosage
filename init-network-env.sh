@@ -7,11 +7,11 @@
 #     sudo bash init-network-env.sh
 #     sudo sh init-network-env.sh   # auto re-execs under bash
 #
-# By default the AP_PSK is generated with 24 random alphanumeric chars
-# so the file is never left with a weak default. Override any value by
-# exporting the corresponding variable before running, e.g.:
+# By default AP_PSK is set to a fixed development value (arrosageberry).
+# Override any value by exporting the corresponding variable before running, e.g.:
 #     sudo AP_SSID=my-ap AP_PSK=my-strong-psk ./init-network-env.sh
 #
+# TODO: generate a random 24-char AP PSK by default instead of the hardcoded value.
 # If the target file already exists, the script refuses to overwrite it
 # unless FORCE=1 is set.
 
@@ -38,18 +38,17 @@ if [[ -e "$TARGET_FILE" && "${FORCE:-0}" != "1" ]]; then
     exit 1
 fi
 
-# Generate a 24-char alphanumeric PSK when one is not provided.
+# Default AP PSK when one is not provided via the environment.
 
 AP_SSID="${AP_SSID:-arrosage-setup}"
-AP_PSK="arrosageberry"
+AP_PSK="${AP_PSK:-arrosageberry}"
 AP_CHANNEL="${AP_CHANNEL:-6}"
 AP_IFACE="${AP_IFACE:-wlan0}"
 LAN_IFACE="${LAN_IFACE:-eth0}"
-POLL_INTERVAL_S="${POLL_INTERVAL_S:-10}"
-FAIL_THRESHOLD="${FAIL_THRESHOLD:-3}"
-SUCCESS_THRESHOLD="${SUCCESS_THRESHOLD:-3}"
-BOOT_GRACE_S="${BOOT_GRACE_S:-20}"
-STA_CONNECT_GRACE_S="${STA_CONNECT_GRACE_S:-30}"
+POLL_INTERVAL_S="${POLL_INTERVAL_S:-60}"
+PING_TARGET="${PING_TARGET:-8.8.8.8}"
+PING_TIMEOUT_S="${PING_TIMEOUT_S:-3}"
+PING_PAUSE_S="${PING_PAUSE_S:-5}"
 
 if [[ ${#AP_PSK} -lt 8 || ${#AP_PSK} -gt 63 ]]; then
     echo "AP_PSK must be between 8 and 63 characters (got ${#AP_PSK})." >&2
@@ -72,12 +71,11 @@ AP_IFACE=${AP_IFACE}
 # Wired LAN interface to check first.
 LAN_IFACE=${LAN_IFACE}
 
-# Watchdog tuning.
+# Watchdog tuning (ping-based, sticky AP until reboot).
 POLL_INTERVAL_S=${POLL_INTERVAL_S}
-FAIL_THRESHOLD=${FAIL_THRESHOLD}
-SUCCESS_THRESHOLD=${SUCCESS_THRESHOLD}
-BOOT_GRACE_S=${BOOT_GRACE_S}
-STA_CONNECT_GRACE_S=${STA_CONNECT_GRACE_S}
+PING_TARGET=${PING_TARGET}
+PING_TIMEOUT_S=${PING_TIMEOUT_S}
+PING_PAUSE_S=${PING_PAUSE_S}
 EOF
 
 chown root:root "$TARGET_FILE"

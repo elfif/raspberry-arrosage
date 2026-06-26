@@ -93,11 +93,13 @@ def is_active(name: str = AP_PROFILE_NAME) -> bool:
 
 
 def up(cfg: Optional[NetworkConfig] = None) -> bool:
-    """Activate the AP profile. Brings the STA profile down first, if active."""
+    """Activate the AP profile. Brings STA down and disconnects Ethernet first."""
     name = cfg.ap_profile_name if cfg else AP_PROFILE_NAME
     sta_name = cfg.sta_profile_name if cfg else STA_PROFILE_NAME
+    lan_iface = cfg.lan_iface if cfg else "eth0"
 
     nmcli.run(["connection", "down", sta_name], timeout=5)
+    nmcli.run(["device", "disconnect", lan_iface], timeout=5)
 
     rc, _, err = nmcli.run(["connection", "up", name], timeout=15)
     if rc != 0:

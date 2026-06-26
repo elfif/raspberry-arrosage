@@ -96,8 +96,7 @@ def set(
     name: str = STA_PROFILE_NAME,
 ) -> dict:
     """
-    Create or update the STA profile, then bump ``network:wifi_changed``
-    so the watchdog re-evaluates.
+    Create or update the STA profile.
 
     Raises :class:`WifiProfileError` on validation or nmcli failure.
     Returns the :func:`get` snapshot on success.

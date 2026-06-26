@@ -5,12 +5,10 @@ info:
   version: 1.0.0
   contact:
     name: Arrosage System
-  license:
-    name: MIT
 
 servers:
-  - url: http://localhost:8000
-    description: Development server
+  - url: http://127.0.0.1:8000
+    description: Local API (loopback only; production clients reach the API via Caddy at /api on port 80)
 
 paths:
   /:
@@ -80,6 +78,21 @@ paths:
                       "GET /history/stats":
                         type: string
                         example: "Aggregate history stats for a month or year"
+                      "GET /network/status":
+                        type: string
+                        example: "Get current LAN/AP state"
+                      "POST /network/force":
+                        type: string
+                        example: "Force the watchdog into AP mode (sticky until reboot)"
+                      "GET /network/wifi":
+                        type: string
+                        example: "Get the configured Wi-Fi client profile"
+                      "PUT /network/wifi":
+                        type: string
+                        example: "Create or replace the Wi-Fi client profile"
+                      "DELETE /network/wifi":
+                        type: string
+                        example: "Remove the Wi-Fi client profile"
 
   /mode:
     get:
@@ -366,6 +379,12 @@ paths:
                   summary: Invalid relay_id
                   value:
                     detail: "Invalid relay_id '8'. Must be an integer between 0 and 7."
+        '422':
+          description: Request body validation error (missing or malformed relay_id)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -651,13 +670,13 @@ paths:
   /network/status:
     get:
       tags:
-        - Network
+        - network
       summary: Get current LAN/AP state
       description: |
         Returns the live state of Ethernet and Wi-Fi-STA (from a short
         nmcli probe) combined with the watchdog's view of the AP
-        (``mode``, ``lan_last_ok_at``, ``ap_active_since``) read from
-        Redis.
+        (``mode`` is ``lan``, ``ap``, or ``checking``; ``lan_last_ok_at``,
+        ``ap_active_since``) read from Redis.
       operationId: getNetworkStatus
       responses:
         '200':
@@ -676,12 +695,12 @@ paths:
   /network/force:
     post:
       tags:
-        - Network
-      summary: Force the watchdog into 'ap' or 'auto'
+        - network
+      summary: Force the watchdog into AP mode
       description: |
         Writes a one-shot intent consumed by the watchdog on its next
-        iteration. ``ap`` forces the AP up; ``auto`` releases the
-        override so the normal state machine resumes.
+        iteration. ``ap`` forces the AP up immediately; the Pi stays in
+        AP mode until reboot. ``auto`` is rejected with HTTP 400.
       operationId: forceNetworkMode
       requestBody:
         required: true
@@ -697,7 +716,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/NetworkForceResponse'
         '400':
-          description: Invalid target
+          description: Invalid target, or ``auto`` rejected (AP mode is sticky until reboot)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request body validation error (missing or malformed target)
           content:
             application/json:
               schema:
@@ -712,7 +737,7 @@ paths:
   /network/wifi:
     get:
       tags:
-        - Network
+        - network
       summary: Get the configured Wi-Fi client profile
       description: Returns the SSID and security of the single WPA2-PSK client profile, or ``configured=false`` if none. The PSK is never returned.
       operationId: getNetworkWifi
@@ -731,13 +756,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
     put:
       tags:
-        - Network
+        - network
       summary: Create or replace the Wi-Fi client profile
       description: |
         Creates (or replaces) the single Wi-Fi client profile. Only
         WPA2-PSK is supported; PSK length must be between 8 and 63
-        characters. Bumps ``network:wifi_changed`` so the watchdog can
-        bring the AP down for the new profile to associate.
+        characters.
       operationId: putNetworkWifi
       requestBody:
         required: true
@@ -758,6 +782,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request body validation error (missing or malformed ssid/psk)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -766,7 +796,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
     delete:
       tags:
-        - Network
+        - network
       summary: Remove the Wi-Fi client profile
       description: Idempotent; returns 204 even if no profile was configured.
       operationId: deleteNetworkWifi
@@ -1155,6 +1185,7 @@ components:
       required:
         - period
         - year
+        - month
         - start_at
         - end_at
         - total_duration_s
@@ -1232,7 +1263,7 @@ components:
         security:
           type: string
           nullable: true
-          enum: [wpa2-psk]
+          description: Key management type from NetworkManager (typically wpa2-psk; may be unknown for non-standard profiles)
           example: "wpa2-psk"
         up:
           type: boolean
@@ -1271,8 +1302,8 @@ components:
         mode:
           type: string
           nullable: true
-          enum: [ethernet, wifi_sta, ap, checking]
-          example: "ethernet"
+          enum: [lan, ap, checking]
+          example: "lan"
         lan_last_ok_at:
           type: integer
           nullable: true
@@ -1293,19 +1324,19 @@ components:
         target:
           type: string
           enum: [ap, auto]
-          description: Target state; ``auto`` releases any previous ``ap`` override
+          description: Target state; ``auto`` is rejected (reboot to retest LAN)
           example: "ap"
 
     NetworkForceResponse:
       type: object
       required:
         - accepted
+        - target
       properties:
         accepted:
           type: boolean
         target:
           type: string
-          nullable: true
           enum: [ap, auto]
           example: "ap"
 
@@ -1323,7 +1354,7 @@ components:
         security:
           type: string
           nullable: true
-          enum: [wpa2-psk]
+          description: Key management type (typically wpa2-psk; may be unknown for non-standard profiles)
           example: "wpa2-psk"
 
     WifiProfileRequest:
@@ -1363,5 +1394,5 @@ tags:
     description: System settings (start time, sequence durations, weekly schedule)
   - name: History
     description: Relay activity history (list + aggregate stats for dashboards)
-  - name: Network
+  - name: network
     description: LAN connectivity status, Wi-Fi client profile, and AP fallback

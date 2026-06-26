@@ -3,8 +3,8 @@ Redis helpers for the `network:*` keys.
 
 The watchdog is the sole writer for ``network:mode``,
 ``network:lan_last_ok_at``, ``network:ap_active_since`` and
-``network:ap_ssid``. The API may write ``network:force`` and
-``network:wifi_changed`` as intents that the watchdog consumes.
+``network:ap_ssid``. The API may write ``network:force`` as a one-shot
+intent that the watchdog consumes.
 """
 
 from __future__ import annotations
@@ -22,12 +22,14 @@ KEY_AP_SSID = "network:ap_ssid"
 KEY_FORCE = "network:force"
 KEY_WIFI_CHANGED = "network:wifi_changed"
 
-MODE_ETHERNET = "ethernet"
-MODE_WIFI_STA = "wifi_sta"
+MODE_LAN = "lan"
 MODE_AP = "ap"
 MODE_CHECKING = "checking"
 
-VALID_MODES = (MODE_ETHERNET, MODE_WIFI_STA, MODE_AP, MODE_CHECKING)
+# Legacy values still readable from Redis before the next watchdog write.
+_LEGACY_LAN_MODES = ("ethernet", "wifi_sta")
+
+VALID_MODES = (MODE_LAN, MODE_AP, MODE_CHECKING)
 
 FORCE_AP = "ap"
 FORCE_AUTO = "auto"
@@ -45,9 +47,20 @@ def _safe(fn, default=None):
         return default
 
 
+def normalize_mode(mode: Optional[str]) -> Optional[str]:
+    """Map legacy mode strings to the current vocabulary."""
+    if mode is None:
+        return None
+    if mode in _LEGACY_LAN_MODES:
+        return MODE_LAN
+    if mode in VALID_MODES:
+        return mode
+    return mode
+
+
 def get_mode() -> Optional[str]:
     """Return the current network mode string, or None if Redis is unreachable."""
-    return _safe(lambda: _redis().get(KEY_MODE))
+    return normalize_mode(_safe(lambda: _redis().get(KEY_MODE)))
 
 
 def set_mode(mode: str) -> bool:

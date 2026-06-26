@@ -1,13 +1,15 @@
 """
-LAN connectivity checks via NetworkManager.
+LAN connectivity checks.
 
-"LAN up" = the interface is ``connected`` AND has a non-link-local IPv4
-(169.254.0.0/16 is excluded because that is the APIPA range NM hands out
-when no DHCP lease was obtained).
+The watchdog uses :func:`lan_reachable` (ICMP ping to a public target).
+The HTTP API still exposes per-interface state via NetworkManager for
+informational ``/network/status`` responses.
 """
 
 from __future__ import annotations
 
+import subprocess
+import time
 from typing import Dict, Optional, Tuple
 
 from . import nmcli
@@ -107,3 +109,32 @@ def primary_medium(status: Dict[str, Dict]) -> Optional[str]:
     if status.get("wifi_sta", {}).get("up"):
         return "wifi_sta"
     return None
+
+
+def lan_reachable(
+    target: str = "8.8.8.8",
+    timeout_s: int = 3,
+    pause_s: int = 5,
+) -> bool:
+    """
+    Return True when two ICMP pings to ``target`` succeed.
+
+    Sends ping #1, waits ``pause_s`` seconds, then ping #2. Any failure
+    returns False (strict semantics). Uses the OS default route, so any
+    working uplink (Ethernet or Wi-Fi STA) satisfies the check.
+    """
+    for i in range(2):
+        if i > 0:
+            time.sleep(pause_s)
+        try:
+            proc = subprocess.run(
+                ["ping", "-c", "1", "-W", str(timeout_s), target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if proc.returncode != 0:
+                return False
+        except (FileNotFoundError, OSError):
+            return False
+    return True

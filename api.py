@@ -287,7 +287,7 @@ async def root():
             "GET /history": "Paginated list of relay activity history",
             "GET /history/stats": "Aggregate history stats for a month or year",
             "GET /network/status": "Get LAN/AP network state",
-            "POST /network/force": "Force watchdog to 'ap' or 'auto'",
+            "POST /network/force": "Force watchdog to 'ap' (sticky until reboot)",
             "GET /network/wifi": "Get configured Wi-Fi client profile (no PSK)",
             "PUT /network/wifi": "Create/replace Wi-Fi client profile (WPA2-PSK)",
             "DELETE /network/wifi": "Remove Wi-Fi client profile"
@@ -913,11 +913,9 @@ async def get_network_status():
 )
 async def force_network_mode(request: NetworkForceRequest):
     """
-    Ask the watchdog to transition to ``"ap"`` or ``"auto"``.
+    Ask the watchdog to transition to ``"ap"``.
 
-    The watchdog consumes the intent on its next iteration. ``"auto"``
-    does not force Ethernet/Wi-Fi-STA specifically; it just clears any
-    earlier ``"ap"`` override so the normal state machine takes over.
+    ``"auto"`` is rejected: AP mode is sticky until reboot.
     """
     try:
         target = (request.target or "").strip().lower()
@@ -928,6 +926,12 @@ async def force_network_mode(request: NetworkForceRequest):
                     f"Invalid target '{request.target}'. "
                     f"Valid targets: {list(network_state.VALID_FORCE_TARGETS)}"
                 ),
+            )
+
+        if target == network_state.FORCE_AUTO:
+            raise HTTPException(
+                status_code=400,
+                detail="AP mode is sticky; reboot to retest LAN",
             )
 
         if not network_state.set_force(target):
@@ -1035,7 +1039,7 @@ if __name__ == "__main__":
     logger.info("   GET  /history - Paginated relay activity history")
     logger.info("   GET  /history/stats - Aggregate history stats (month|year)")
     logger.info("   GET  /network/status - LAN/AP network state")
-    logger.info("   POST /network/force - Force watchdog ('ap' or 'auto')")
+    logger.info("   POST /network/force - Force watchdog to 'ap' (sticky until reboot)")
     logger.info("   GET  /network/wifi - Configured Wi-Fi client profile")
     logger.info("   PUT  /network/wifi - Create/replace Wi-Fi client profile")
     logger.info("   DELETE /network/wifi - Remove Wi-Fi client profile")

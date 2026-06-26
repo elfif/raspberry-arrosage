@@ -30,11 +30,10 @@ class NetworkConfig:
     ap_channel: int = 6
     ap_iface: str = "wlan0"
     lan_iface: str = "eth0"
-    poll_interval_s: int = 10
-    fail_threshold: int = 3
-    success_threshold: int = 3
-    boot_grace_s: int = 20
-    sta_connect_grace_s: int = 30
+    poll_interval_s: int = 60
+    ping_target: str = "8.8.8.8"
+    ping_timeout_s: int = 3
+    ping_pause_s: int = 5
 
     ap_profile_name: str = AP_PROFILE_NAME
     sta_profile_name: str = STA_PROFILE_NAME
@@ -103,9 +102,8 @@ def load_config(path: Optional[str] = None) -> NetworkConfig:
         ap_channel=_i("AP_CHANNEL", 6),
         ap_iface=_s("AP_IFACE", "wlan0"),
         lan_iface=_s("LAN_IFACE", "eth0"),
-        poll_interval_s=_i("POLL_INTERVAL_S", 10),
-        fail_threshold=_i("FAIL_THRESHOLD", 3),
-        success_threshold=_i("SUCCESS_THRESHOLD", 3),
-        boot_grace_s=_i("BOOT_GRACE_S", 20),
-        sta_connect_grace_s=_i("STA_CONNECT_GRACE_S", 30),
+        poll_interval_s=_i("POLL_INTERVAL_S", 60),
+        ping_target=_s("PING_TARGET", "8.8.8.8"),
+        ping_timeout_s=_i("PING_TIMEOUT_S", 3),
+        ping_pause_s=_i("PING_PAUSE_S", 5),
     )

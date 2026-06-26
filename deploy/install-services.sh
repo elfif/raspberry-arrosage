@@ -88,6 +88,38 @@ if ! systemctl is-enabled --quiet NetworkManager.service; then
     echo "         Run: sudo systemctl enable --now NetworkManager.service"
 fi
 
+# --- Avahi (mDNS: http://arrosage.local) --------------------------------
+
+AVAHI_CONF_SRC="${SCRIPT_DIR}/avahi/avahi-daemon.conf"
+AVAHI_CONF_DST="/etc/avahi/avahi-daemon.conf"
+
+echo "==> Ensuring avahi-daemon (mDNS arrosage.local)..."
+export DEBIAN_FRONTEND=noninteractive
+if ! command -v avahi-daemon >/dev/null 2>&1; then
+    apt-get update -qq
+    apt-get install -y -qq avahi-daemon \
+        || fail "apt-get install avahi-daemon failed"
+else
+    echo "    avahi-daemon already present"
+fi
+
+[[ -f "${AVAHI_CONF_SRC}" ]] || fail "missing ${AVAHI_CONF_SRC}"
+install -d -m 0755 -o root -g root /etc/avahi
+if [[ -f "${AVAHI_CONF_DST}" ]]; then
+    if grep -qE '^[[:space:]]*host-name=' "${AVAHI_CONF_DST}"; then
+        sed -i 's/^[[:space:]]*host-name=.*/host-name=arrosage/' "${AVAHI_CONF_DST}"
+    else
+        sed -i '/^\[server\]/a host-name=arrosage' "${AVAHI_CONF_DST}"
+    fi
+    echo "    updated host-name=arrosage in ${AVAHI_CONF_DST}"
+else
+    install -m 0644 -o root -g root "${AVAHI_CONF_SRC}" "${AVAHI_CONF_DST}"
+    echo "    installed ${AVAHI_CONF_DST}"
+fi
+
+systemctl enable avahi-daemon.service
+systemctl restart avahi-daemon.service
+
 # --- Install ------------------------------------------------------------
 
 echo "==> Installing units to ${UNIT_DST_DIR}..."
@@ -117,3 +149,4 @@ echo "Done. Useful follow-ups:"
 echo "    journalctl -u arrosage-loop -f"
 echo "    journalctl -u arrosage-api  -f"
 echo "    journalctl -u caddy         -f"
+echo "    journalctl -u avahi-daemon  -f"
